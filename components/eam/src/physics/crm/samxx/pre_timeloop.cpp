@@ -137,8 +137,6 @@ void pre_timeloop() {
   YAKL_SCOPE( crm_output_qs_mean         , :: crm_output_qs_mean ); 
   YAKL_SCOPE( crm_output_qg_mean         , :: crm_output_qg_mean ); 
   YAKL_SCOPE( crm_output_qr_mean         , :: crm_output_qr_mean ); 
-  YAKL_SCOPE( crm_output_nc_mean         , :: crm_output_nc_mean ); 
-  YAKL_SCOPE( crm_output_ni_mean         , :: crm_output_ni_mean ); 
   YAKL_SCOPE( crm_output_mu_crm          , :: crm_output_mu_crm ); 
   YAKL_SCOPE( crm_output_md_crm          , :: crm_output_md_crm ); 
   YAKL_SCOPE( crm_output_eu_crm          , :: crm_output_eu_crm ); 
@@ -347,12 +345,13 @@ void pre_timeloop() {
   //     for (int i=0; i<nx; i++) {
   //       for (int icrm=0; icrm<ncrms; icrm++) {
   parallel_for( SimpleBounds<4>(nzm,ny,nx,ncrms) , YAKL_LAMBDA (int k, int j, int i, int icrm) {
-    if (is_same_str(microphysics_scheme, "sam1mom") == 0) {
+    if (microphysics_scheme == microphysics::sam1mom) {
       micro_field(0,k,j+offy_s,i+offx_s,icrm) = crm_state_qt(k,j,i,icrm);
       micro_field(1,k,j+offy_s,i+offx_s,icrm) = crm_state_qp(k,j,i,icrm);
       qn(k,j,i,icrm) = crm_state_qn(k,j,i,icrm);
     }
-    if (is_same_str(microphysics_scheme, "p3") == 0) {
+
+    if (microphysics_scheme == microphysics::p3) {
       micro_field(idx_qt,k,j+offy_s,i+offx_s,icrm) = crm_state_qt(k,j,i,icrm);
       micro_field(idx_qi,k,j+offy_s,i+offx_s,icrm) = crm_state_qi(k,j,i,icrm);
       micro_field(idx_nc,k,j+offy_s,i+offx_s,icrm) = crm_state_nc(k,j,i,icrm);
@@ -365,17 +364,17 @@ void pre_timeloop() {
       t_prev(k,j,i,icrm)                           = crm_state_t_prev(k,j,i,icrm);
       q_prev(k,j,i,icrm)                           = crm_state_q_prev(k,j,i,icrm);
     }
-    if (is_same_str(turbulence_scheme, "smag") == 0) { CF3D(k,j,i,icrm) = 1.0; }
-    if (is_same_str(turbulence_scheme, "shoc") == 0) { CF3D(k,j,i,icrm) = 1.0; }
+    if (turbulence_scheme == turbulence::smag) { CF3D(k,j,i,icrm) = 1.0; }
+    if (turbulence_scheme == turbulence::shoc) { CF3D(k,j,i,icrm) = 1.0; }
   });
 
   // microphysics scheme initialization
-  if (is_same_str(microphysics_scheme, "sam1mom") == 0) { micro_init(); }
-  if (is_same_str(microphysics_scheme, "p3") == 0) { micro_p3_init(); }
+  if (microphysics_scheme == microphysics::sam1mom) { micro_init(); }
+  if (microphysics_scheme == microphysics::p3) { micro_p3_init(); }
   
   // subgrid scale turbulence scheme initialization
-  if (is_same_str(turbulence_scheme, "smag") == 0) { sgs_init(); }
-  // if (is_same_str(turbulence_scheme, "shoc") == 0) { shoc_initialize(); }
+  if (turbulence_scheme == turbulence::smag) { sgs_init(); }
+  if (turbulence_scheme == turbulence::shoc) { shoc_initialize(); }
 
   // for (int k=0; k<nzm; k++) {
   //  for (int icrm=0; icrm<ncrms; icrm++) {
@@ -452,7 +451,7 @@ void pre_timeloop() {
       t_vt_tend(k,icrm) = ( crm_input_t_vt(l,icrm) - t_vt(k,icrm) )*idt_gl ;
       q_vt_tend(k,icrm) = ( crm_input_q_vt(l,icrm) - q_vt(k,icrm) )*idt_gl ;
     }
-    if (is_same_str(microphysics_scheme, "p3") == 0) {
+    if (microphysics_scheme == microphysics::p3) {
       nccn(k,icrm)           = crm_input_nccn(l,icrm);
       nc_nuceat_tend(k,icrm) = crm_input_nc_nuceat_tend(plev-(k+1),icrm);
       ni_activated(k,icrm)   = crm_input_ni_activated(plev-(k+1),icrm);
@@ -487,8 +486,6 @@ void pre_timeloop() {
       crm_output_qs_mean   (k,icrm) = 0.0;
       crm_output_qg_mean   (k,icrm) = 0.0;
       crm_output_qr_mean   (k,icrm) = 0.0;
-      crm_output_nc_mean   (k,icrm) = 0.0;
-      crm_output_ni_mean   (k,icrm) = 0.0;
       crm_output_mu_crm    (k,icrm) = 0.0;
       crm_output_md_crm    (k,icrm) = 0.0;
       crm_output_eu_crm    (k,icrm) = 0.0;
@@ -548,5 +545,4 @@ void pre_timeloop() {
   if (use_crm_accel) {
     crm_accel_nstop(nstop);  // reduce nstop by factor of (1 + crm_accel_factor)
   }
-
 }

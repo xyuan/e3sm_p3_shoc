@@ -1,8 +1,10 @@
 
+#include "samxx_const.h"
 #include "pre_timeloop.h"
 #include "post_timeloop.h"
 #include "timeloop.h"
 #include "vars.h"
+#include <ctime>
 
 extern "C" void crm(int ncrms_in, int pcols_in, real dt_gl, int plev,
                     real *crm_input_bflxls_p, real *crm_input_wndls_p,
@@ -26,9 +28,7 @@ extern "C" void crm(int ncrms_in, int pcols_in, real dt_gl, int plev,
                     real *crm_output_subcycle_factor_p,
                     real *crm_output_cld_p, real *crm_output_cldtop_p, real *crm_output_gicewp_p, real *crm_output_gliqwp_p,
                     real *crm_output_mctot_p, real *crm_output_mcup_p, real *crm_output_mcdn_p, real *crm_output_mcuup_p, real *crm_output_mcudn_p,
-                    real *crm_output_qc_mean_p, real *crm_output_qi_mean_p,
-                    real *crm_output_qs_mean_p, real *crm_output_qg_mean_p, real *crm_output_qr_mean_p,
-                    real *crm_output_nc_mean_p, real *crm_output_ni_mean_p,
+                    real *crm_output_qc_mean_p, real *crm_output_qi_mean_p, real *crm_output_qs_mean_p, real *crm_output_qg_mean_p, real *crm_output_qr_mean_p,
                     real *crm_output_mu_crm_p, real *crm_output_md_crm_p, real *crm_output_eu_crm_p, real *crm_output_du_crm_p, real *crm_output_ed_crm_p,
                     real *crm_output_flux_qt_p, real *crm_output_flux_u_p, real *crm_output_flux_v_p, real *crm_output_fluxsgs_qt_p,
                     real *crm_output_tkez_p, real *crm_output_tkew_p, real *crm_output_tkesgsz_p, real *crm_output_tkz_p,
@@ -56,6 +56,8 @@ extern "C" void crm(int ncrms_in, int pcols_in, real dt_gl, int plev,
                     char* turbulence_scheme_in,
                     bool use_crm_accel_in, real crm_accel_factor_in, bool crm_accel_uv_in) {
 
+auto start0 = std::clock();
+
   dt_glob = dt_gl;
   pcols = pcols_in;
   ncrms = ncrms_in;
@@ -65,8 +67,19 @@ extern "C" void crm(int ncrms_in, int pcols_in, real dt_gl, int plev,
   use_crm_accel = use_crm_accel_in;
   crm_accel_factor = crm_accel_factor_in;
   crm_accel_uv = crm_accel_uv_in;
-  microphysics_scheme = microphysics_scheme_in;
-  turbulence_scheme = turbulence_scheme_in;
+
+  if (is_same_str(microphysics_scheme_in, "sam1mom") == 0) { 
+     microphysics_scheme = microphysics::sam1mom;
+  } else if (is_same_str(microphysics_scheme_in, "sam1mom") == 0) {
+     microphysics_scheme = microphysics::p3;
+  }
+
+  if (is_same_str(turbulence_scheme_in, "shoc") == 0) { 
+     turbulence_scheme = turbulence::shoc;
+  } else if (is_same_str(turbulence_scheme_in, "smag") == 0) {
+     turbulence_scheme = turbulence::smag;
+  }
+
 
   create_and_copy_inputs(crm_input_bflxls_p, crm_input_wndls_p,
                          crm_input_zmid_p, crm_input_zint_p,
@@ -101,10 +114,9 @@ extern "C" void crm(int ncrms_in, int pcols_in, real dt_gl, int plev,
                crm_output_gicewp_p, crm_output_gliqwp_p, 
                crm_output_mctot_p, crm_output_mcup_p, crm_output_mcdn_p, 
                crm_output_mcuup_p, crm_output_mcudn_p, 
-               crm_output_qc_mean_p, crm_output_qi_mean_p,
-               crm_output_qs_mean_p, crm_output_qg_mean_p, crm_output_qr_mean_p,
-               crm_output_nc_mean_p, crm_output_ni_mean_p,
-               crm_output_mu_crm_p, crm_output_md_crm_p, crm_output_eu_crm_p, 
+               crm_output_qc_mean_p, crm_output_qi_mean_p, crm_output_qs_mean_p, 
+               crm_output_qg_mean_p, crm_output_qr_mean_p, crm_output_mu_crm_p, 
+               crm_output_md_crm_p, crm_output_eu_crm_p, 
                crm_output_du_crm_p, crm_output_ed_crm_p, crm_output_flux_qt_p, 
                crm_output_flux_u_p, crm_output_flux_v_p, 
                crm_output_fluxsgs_qt_p, crm_output_tkez_p, crm_output_tkew_p, crm_output_tkesgsz_p, crm_output_tkz_p, 
@@ -148,10 +160,9 @@ extern "C" void crm(int ncrms_in, int pcols_in, real dt_gl, int plev,
                            crm_output_gicewp_p, crm_output_gliqwp_p, 
                            crm_output_mctot_p, crm_output_mcup_p, crm_output_mcdn_p, 
                            crm_output_mcuup_p, crm_output_mcudn_p, 
-                           crm_output_qc_mean_p, crm_output_qi_mean_p,
-                           crm_output_qs_mean_p, crm_output_qg_mean_p, crm_output_qr_mean_p,
-                           crm_output_nc_mean_p, crm_output_ni_mean_p,
-                           crm_output_mu_crm_p, crm_output_md_crm_p, crm_output_eu_crm_p, 
+                           crm_output_qc_mean_p, crm_output_qi_mean_p, crm_output_qs_mean_p, 
+                           crm_output_qg_mean_p, crm_output_qr_mean_p, crm_output_mu_crm_p, 
+                           crm_output_md_crm_p, crm_output_eu_crm_p, 
                            crm_output_du_crm_p, crm_output_ed_crm_p, crm_output_flux_qt_p, 
                            crm_output_flux_u_p, crm_output_flux_v_p, 
                            crm_output_fluxsgs_qt_p, crm_output_tkez_p, crm_output_tkew_p, crm_output_tkesgsz_p, crm_output_tkz_p, 
@@ -171,10 +182,12 @@ extern "C" void crm(int ncrms_in, int pcols_in, real dt_gl, int plev,
 #ifdef MMF_ESMT
                            crm_output_u_tend_esmt_p, crm_output_v_tend_esmt_p,
 #endif
-	                         crm_clear_rh_p);
+	                   crm_clear_rh_p);
 
   finalize();
-  
   yakl::fence();
+
+auto end0 = std::clock();
+printf("wtime, step=%d, ncrms=%d, time=%13.6e\n", nstep,ncrms,(end0-start0)/(float)CLOCKS_PER_SEC);
 }
 

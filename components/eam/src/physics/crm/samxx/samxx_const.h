@@ -5,6 +5,7 @@
 #include <iomanip>
 
 #include "scream_types.hpp"
+#include "p3_functions.hpp"
 
 using yakl::c::Bounds;
 using yakl::c::SimpleBounds;
@@ -14,6 +15,7 @@ using yakl::abs;
 using yakl::c::parallel_for;
 using yakl::SArray;
 using yakl::ScalarLiveOut;
+using C = scream::physics::Constants<scream::Real>;
 
 template <class T>
 void DEBUG(T var) {
@@ -126,7 +128,18 @@ int  constexpr offy_tk2   = 1 - (1-YES3D);
 int  constexpr offy_sstxy = 1 - (1-YES3D);
 int  constexpr offy_fcory = 1 - 0        ;
 
-
+// p3 tables size
+int constexpr mu_r_table_dim     = C::MU_R_TABLE_DIM;
+int constexpr vtable_dim0        = C::VTABLE_DIM0;
+int constexpr vtable_dim1        = C::VTABLE_DIM1;
+int constexpr densize            = 5;
+int constexpr rimsize            = 4;
+int constexpr isize              = 50;
+int constexpr ice_table_size     = 12;
+int constexpr rcollsize          = 30;
+int constexpr collect_table_size = 2;
+int constexpr dnusize            = 16;
+real constexpr mu_r_const        = 1.;
 
 real constexpr SHR_CONST_PI      = 3.14159265358979323846;  // pi
 real constexpr SHR_CONST_CDAY    = 86400.0;      // sec in calendar day ~ sec
@@ -225,6 +238,13 @@ enum {
   idx_bm,      // ice rime volume
   idx_qc       // cloud liq amount (this is also part of total water)
 };
+
+// the following is used to workaround hip and sycl since it doesn't support
+// strcmp.
+// microphysics enum class
+enum class microphysics : unsigned { p3 = 0, sam1mom };
+// turbulence enum class
+enum class turbulence : unsigned { shoc = 0, smag };
 
 real constexpr rhor = 1000.; // Density of water, kg/m3
 real constexpr rhos = 100.;  // Density of snow, kg/m3

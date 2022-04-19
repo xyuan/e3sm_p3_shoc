@@ -14,14 +14,14 @@ unset ARCH
 export MACH="summit"
 export NCHOME=${OLCF_NETCDF_C_ROOT}
 export NFHOME=${OLCF_NETCDF_FORTRAN_ROOT}
-export NCRMS=168
+export NCRMS=56
 export CC=mpicc
 export CXX=mpic++
 export FC=mpif90
-export YAKL_F90_FLAGS="-O3 -ffree-line-length-none"
+export YAKL_F90_FLAGS=" -O3 -ffree-line-length-none"
 export FFLAGS="-O3 -ffree-line-length-none -I${OLCF_NETCDF_FORTRAN_ROOT}/include"
-export YAKL_C_FLAGS="-O3"
-export YAKL_CXX_FLAGS="-O3"
+export YAKL_C_FLAGS="-O3 "
+export YAKL_CXX_FLAGS="-O3 "
 export YAKL_HOME="`pwd`/../../../../../../../../externals/YAKL"
 
 

@@ -24,7 +24,7 @@ void ice_fall() {
   real4d fz  ("fz"  ,nz,ny,nx,ncrms);
 
   int index_cloud_ice = -1;
-  if (is_same_str(microphysics_scheme, "sam1mom") == 0) { index_cloud_ice = 0; }
+  if (microphysics_scheme == microphysics::sam1mom) { index_cloud_ice = 0; }
   if(index_cloud_ice == -1) { return;}
 
   // for (int icrm=0; icrm<ncrms; icrm++) {

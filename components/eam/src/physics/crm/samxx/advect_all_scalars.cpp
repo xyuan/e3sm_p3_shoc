@@ -1,8 +1,10 @@
 #include "advect_all_scalars.h"
 #include "samxx_utils.h"
+#include "samxx_const.h"
 
 void advect_all_scalars() {
 
+  YAKL_SCOPE( microphysics_scheme, :: microphysics_scheme);
   real2d dummy("dummy",nz,ncrms);
   real1d esmt_offset("esmt_offset", ncrms);
 #ifdef MMF_ESMT
@@ -29,7 +31,7 @@ void advect_all_scalars() {
     }
   }
 
-  if (is_same_str(microphysics_scheme, "sam1mom") == 0) {
+  if (microphysics_scheme == microphysics::sam1mom) {
     micro_precip_fall();
   }
 

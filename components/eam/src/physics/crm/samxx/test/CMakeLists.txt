@@ -8,6 +8,11 @@ enable_language(C)
 if ("${YAKL_ARCH}" STREQUAL "CUDA")
   enable_language(CUDA)
 endif()
+
+if ("${YAKL_ARCH}" STREQUAL "HIP")
+  enable_language(HIP)
+endif()
+
 enable_testing()
 
 file(GLOB FORTRAN_SRC ../../sam/*.F90 ../../sam/SGS_TKE/*.F90 ../../sam/MICRO_SAM1MOM/*.F90 ../../sam/ADV_MPDATA/*.F90 ../../sam/*.c )

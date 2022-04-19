@@ -22,7 +22,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/../scream/src/physics/p3)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../scream/src/physics/shoc)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../scream/src/physics/share)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../scream/src/share)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/../scream)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/../scream/src)
 
 include_directories(${YAKL_HOME})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../../scream/src/physics/p3)

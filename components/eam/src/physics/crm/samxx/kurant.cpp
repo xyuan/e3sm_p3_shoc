@@ -68,7 +68,7 @@ void kurant () {
     exit(-1);
   }
 
-  if (is_same_str(turbulence_scheme, "smag") == 0) { kurant_sgs(cfl); }
+  if (turbulence_scheme == turbulence::smag) { kurant_sgs(cfl); }
 
   ncycle = max(ncycle,max(1,static_cast<int>(ceil(cfl/0.7))));
 

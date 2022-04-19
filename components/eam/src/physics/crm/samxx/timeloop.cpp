@@ -13,6 +13,7 @@ void timeloop() {
   YAKL_SCOPE( rank                     , :: rank );
 
   nstep = 0;
+  nstop = 10;
 
   do {
     nstep = nstep + 1;
@@ -130,7 +131,7 @@ void timeloop() {
 
       //---------------------------------------------------------
       //   Ice fall-out
-      if (is_same_str(microphysics_scheme, "sam1mom") == 0) {
+      if (microphysics_scheme == microphysics::sam1mom) {
         ice_fall();
       }
 
@@ -151,8 +152,8 @@ void timeloop() {
       //-----------------------------------------------------------
       //  SGS physics:
       if (dosgs) {
-        if (is_same_str(turbulence_scheme, "smag") == 0) { sgs_proc(); }
-        // if (is_same_str(turbulence_scheme, "shoc") == 0) { shoc_proc(); }
+        if (turbulence_scheme == turbulence::smag) { sgs_proc(); }
+        if (turbulence_scheme == turbulence::shoc) { shoc_proc(); }
       }
 
 // for (int k=0; k<nzm; k++) {
@@ -200,7 +201,7 @@ void timeloop() {
       //----------------------------------------------------------
       //  SGS effects on momentum:
       if (dosgs) {
-        if (is_same_str(turbulence_scheme, "smag") == 0) { sgs_mom(); }
+        if (turbulence_scheme == turbulence::smag) { sgs_mom(); }
       }
 
 #if defined(MMF_ESMT)
@@ -241,7 +242,7 @@ void timeloop() {
       //---------------------------------------------------------
       //      SGS effects on scalars :
       if (dosgs) {
-        if (is_same_str(turbulence_scheme, "smag") == 0) { sgs_scalars(); }
+        if (turbulence_scheme == turbulence::smag) { sgs_scalars(); }
       }
 
       //-----------------------------------------------------------
@@ -249,9 +250,10 @@ void timeloop() {
 
       //-----------------------------------------------------------
       //       Cloud condensation/evaporation and precipitation processes:
+
       if (docloud || dosmoke) {
-        if (is_same_str(microphysics_scheme, "sam1mom") == 0) { micro_proc(); }
-        if (is_same_str(microphysics_scheme, "p3")      == 0) { micro_p3_proc(); }
+        if (microphysics_scheme == microphysics::sam1mom) { micro_proc(); }
+        if (microphysics_scheme == microphysics::p3) { micro_p3_proc(); }
       }
 
       //-----------------------------------------------------------

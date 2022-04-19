@@ -36,11 +36,11 @@ extern "C" void setparm() {
   dtn = dt;
 
   // Turbulence scheme options
-  if (is_same_str(turbulence_scheme, "smag") == 0) {
+  if (turbulence_scheme == turbulence::smag) {
     dosmagor   = true;
     advect_sgs = false;
   }
-  if (is_same_str(turbulence_scheme, "shoc") == 0) {
+  if (turbulence_scheme == turbulence::shoc) {
     dosmagor   = false;
     advect_sgs = true;
   }

@@ -1,9 +1,6 @@
 
 #include "shoc.h"
 
-// temporarily disable all this code for now
-#ifdef use_shoc
-
 using namespace scream;
 using namespace scream::shoc;
 
@@ -326,8 +323,8 @@ void shoc_proc() {
   });
 
   // update diagnostic micro fields based on micro scheme
-  if (is_same_str(microphysics_scheme, "sam1mom") == 0) { micro_diagnose(); }
-  if (is_same_str(microphysics_scheme, "p3")      == 0) { micro_p3_diagnose(); }
+  if (microphysics_scheme == microphysics::sam1mom) { micro_diagnose(); }
+  if (microphysics_scheme == microphysics::p3) { micro_p3_diagnose(); }
 
   // update other variables
   parallel_for( SimpleBounds<4>(nzm, ny, nx, ncrms) , YAKL_LAMBDA (int k, int j, int i, int icrm) {
@@ -353,5 +350,3 @@ void shoc_proc() {
   });
 
 }
-
-#endif

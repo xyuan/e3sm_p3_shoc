@@ -75,10 +75,12 @@ program driver
   integer       , allocatable :: gcolp(:)
   character(len=64) :: fprefix = 'cpp_output'
   integer(8) :: t1, t2, tr
+  integer :: i,j,k
 
   logical(c_bool):: use_MMF_VT      ! flag for MMF variance transport
   integer        :: MMF_VT_wn_max   ! wavenumber cutoff for filtered variance transport
   character(len=10) :: MMF_microphysics_scheme = 'p3'
+  !character(len=10) :: MMF_microphysics_scheme = "sam1mom"
   character(len=10) :: MMF_turbulence_scheme = 'smag'
  
 #if HAVE_MPI
@@ -89,8 +91,9 @@ program driver
   nranks = 1
   rank = 0
 #endif
-  call distr_indices(NCRMS,nranks,rank,myTasks_beg,myTasks_end)
+!  call distr_indices(NCRMS,nranks,rank,myTasks_beg,myTasks_end)
 
+  call distr_indices(336,nranks,rank,myTasks_beg,myTasks_end)
   ncrms = myTasks_end - myTasks_beg + 1
   masterTask = rank == 0
 
@@ -183,6 +186,10 @@ program driver
   call dmdf_read( read_crm_input_pdel        , fname_in , trim("in_pdel          ") , myTasks_beg , myTasks_end , .false. , .false. )
   call dmdf_read( read_crm_input_ul          , fname_in , trim("in_ul            ") , myTasks_beg , myTasks_end , .false. , .false. )
   call dmdf_read( read_crm_input_vl          , fname_in , trim("in_vl            ") , myTasks_beg , myTasks_end , .false. , .false. )
+
+  call dmdf_read( read_crm_input_nccn          , fname_in , trim("in_nccn          ") , myTasks_beg , myTasks_end , .false. , .false. )
+  call dmdf_read( read_crm_input_nc_nuceat_tend, fname_in , trim("in_nc_nuceat_tend") , myTasks_beg , myTasks_end , .false. , .false. )
+  call dmdf_read( read_crm_input_ni_activated  , fname_in , trim("in_niactivated   ") , myTasks_beg , myTasks_end , .false. , .false. )
 #ifdef MMF_ESMT
   call dmdf_read( read_crm_input_ul_esmt     , fname_in , trim("in_ul_esmt       ") , myTasks_beg , myTasks_end , .false. , .false. )
   call dmdf_read( read_crm_input_vl_esmt     , fname_in , trim("in_vl_esmt       ") , myTasks_beg , myTasks_end , .false. , .false. )
@@ -223,7 +230,7 @@ program driver
   call dmdf_read( crm_input%fluxq00          , fname_in , trim("in_fluxq00       ") , myTasks_beg , myTasks_end , .false. , .false. )
   call dmdf_read( crm_output%subcycle_factor   , fname_in , trim("out_subcycle_factor") , myTasks_beg , myTasks_end , .false. , .true.  )
 
-  do icrm = 1 , ncrms
+  do icrm = 1, ncrms
     crm_input%zmid          (icrm,:)  = read_crm_input_zmid       (:    ,icrm)                       
     crm_input%zint          (icrm,:)  = read_crm_input_zint       (:    ,icrm)                       
     crm_input%tl            (icrm,:)  = read_crm_input_tl         (:    ,icrm)                       
@@ -234,15 +241,14 @@ program driver
     crm_input%pint          (icrm,:)  = read_crm_input_pint       (:    ,icrm)                       
     crm_input%pdel          (icrm,:)  = read_crm_input_pdel       (:    ,icrm)                       
     crm_input%ul            (icrm,:)  = read_crm_input_ul         (:    ,icrm)                       
-    crm_input%vl            (icrm,:)  = read_crm_input_vl         (:    ,icrm)                      
-    crm_input%nccn          (icrm,:)  = 1.0e3
-    crm_input%nc_nuceat_tend(icrm,:)  = 1.0
-    crm_input%ni_activated  (icrm,:)  = 1.0
-
+    crm_input%vl            (icrm,:)  = read_crm_input_vl         (:    ,icrm)                     
+    crm_input%nccn          (icrm,:)  = read_crm_input_nccn       (:    ,icrm)
+    crm_input%nc_nuceat_tend(icrm,:)  = read_crm_input_nc_nuceat_tend(: ,icrm)
+    crm_input%ni_activated  (icrm,:)  = read_crm_input_ni_activated(:   ,icrm)
 #ifdef MMF_ESMT
     crm_input%ul_esmt    (icrm,:)     = read_crm_input_ul_esmt    (:    ,icrm)
     crm_input%vl_esmt    (icrm,:)     = read_crm_input_vl_esmt    (:    ,icrm)
-#endif  
+#endif 
     crm_state%u_wind     (icrm,:,:,:) = read_crm_state_u_wind     (:,:,:,icrm) 
     crm_state%v_wind     (icrm,:,:,:) = read_crm_state_v_wind     (:,:,:,icrm) 
     crm_state%w_wind     (icrm,:,:,:) = read_crm_state_w_wind     (:,:,:,icrm) 
@@ -261,8 +267,12 @@ program driver
     crm_state%bm         (icrm,:,:,:) = read_crm_state_bm         (:,:,:,icrm)
 
     crm_state%t_prev     (icrm,:,:,:) = read_crm_state_temperature(:,:,:,icrm)
-    crm_state%q_prev     (icrm,:,:,:) = read_crm_state_qt         (:,:,:,icrm) - read_crm_state_qc(:,:,:,icrm)
- 
+
+    ! cray ftn workaround compiler time error
+    do i=1,crm_nx; do j=1,crm_ny; do k=1,crm_nz
+       crm_state%q_prev(icrm,i,j,k) = read_crm_state_qt(i,j,k,icrm) - read_crm_state_qc(i,j,k,icrm)
+    enddo; enddo; enddo
+
     crm_rad%qrad         (icrm,:,:,:) = read_crm_rad_qrad         (:,:,:,icrm) 
     crm_rad%temperature  (icrm,:,:,:) = read_crm_rad_temperature  (:,:,:,icrm) 
     crm_rad%qv           (icrm,:,:,:) = read_crm_rad_qv           (:,:,:,icrm) 
@@ -290,7 +300,8 @@ program driver
   ! here you might need to remove this argument
 
   ! Run the code
-      call crm(ncrms, ncrms, dt_gl(1), plev, &
+      call scream_session_init()
+      call crm(ncrms, ncrms, dt_gl(1)*2., plev, &
                crm_input%bflxls, crm_input%wndls, &
                crm_input%zmid, crm_input%zint, &
                crm_input%pmid, crm_input%pint, crm_input%pdel, &
@@ -340,9 +351,7 @@ program driver
                trim(MMF_microphysics_scheme), &
                trim(MMF_turbulence_scheme), &
                logical(.true.,c_bool) , 2._c_double , logical(.true.,c_bool) )
-#if HAVE_MPI
-  call mpi_barrier(mpi_comm_world,ierr)
-#endif
+  call scream_session_finalize()
   if (masterTask) then
     call system_clock(t2,tr)
     write(*,*) "Elapsed Time: " , real(t2-t1,8) / real(tr,8)
@@ -351,6 +360,10 @@ program driver
   if (masterTask) then
     write(*,*) 'Writing output data'
   endif
+
+#if HAVE_MPI
+  call mpi_barrier(mpi_comm_world,ierr)
+#endif
 
 #if 0
   ! dmdf_write(dat,rank,fprefix,vname       ,first,last) !For scalar values
@@ -455,7 +468,6 @@ program driver
 #if HAVE_MPI
   call mpi_finalize(ierr)
 #endif
-
 contains
 
   subroutine distr_indices(nTasks,nThreads,myThreadID,myTasks_beg,myTasks_end)
