@@ -52,7 +52,6 @@
 
 #include <utility>
 #include <impl/Kokkos_Spinwait.hpp>
-#include <impl/Kokkos_FunctorAdapter.hpp>
 
 #include <Kokkos_Atomic.hpp>
 
@@ -63,7 +62,6 @@
 
 namespace Kokkos {
 namespace Impl {
-
 class ThreadsExec {
  public:
   // Fan array has log_2(NT) reduction threads plus 2 scan threads
@@ -122,15 +120,13 @@ class ThreadsExec {
 
   static void global_lock();
   static void global_unlock();
-  static bool spawn();
+  static void spawn();
 
   static void execute_resize_scratch(ThreadsExec &, const void *);
   static void execute_sleep(ThreadsExec &, const void *);
 
   ThreadsExec(const ThreadsExec &);
   ThreadsExec &operator=(const ThreadsExec &);
-
-  static void execute_serial(void (*)(ThreadsExec &, const void *));
 
  public:
   KOKKOS_INLINE_FUNCTION int pool_size() const { return m_pool_size; }
@@ -258,11 +254,8 @@ class ThreadsExec {
   //------------------------------------
   // All-thread functions:
 
-  template <class FunctorType, class ArgTag>
+  template <class FunctorType>
   inline void fan_in_reduce(const FunctorType &f) const {
-    using Join  = Kokkos::Impl::FunctorValueJoin<FunctorType, ArgTag>;
-    using Final = Kokkos::Impl::FunctorFinal<FunctorType, ArgTag>;
-
     const int rev_rank = m_pool_size - (m_pool_rank + 1);
 
     for (int i = 0; i < m_pool_fan_size; ++i) {
@@ -270,11 +263,15 @@ class ThreadsExec {
 
       Impl::spinwait_while_equal<int>(fan.m_pool_state, ThreadsExec::Active);
 
-      Join::join(f, reduce_memory(), fan.reduce_memory());
+      f.join(
+          reinterpret_cast<typename FunctorType::value_type *>(reduce_memory()),
+          reinterpret_cast<const typename FunctorType::value_type *>(
+              fan.reduce_memory()));
     }
 
     if (!rev_rank) {
-      Final::final(f, reduce_memory());
+      f.final(reinterpret_cast<typename FunctorType::value_type *>(
+          reduce_memory()));
     }
 
     //  This thread has updated 'reduce_memory()' and upon returning
@@ -298,7 +295,7 @@ class ThreadsExec {
     }
   }
 
-  template <class FunctorType, class ArgTag>
+  template <class FunctorType>
   inline void scan_large(const FunctorType &f) {
     // Sequence of states:
     //  0) Active             : entry and exit state
@@ -307,14 +304,10 @@ class ThreadsExec {
     //  3) Rendezvous         : All threads inclusive scan value are available
     //  4) ScanCompleted      : exclusive scan value copied
 
-    using Traits = Kokkos::Impl::FunctorValueTraits<FunctorType, ArgTag>;
-    using Join   = Kokkos::Impl::FunctorValueJoin<FunctorType, ArgTag>;
-    using Init   = Kokkos::Impl::FunctorValueInit<FunctorType, ArgTag>;
-
-    using scalar_type = typename Traits::value_type;
+    using scalar_type = typename FunctorType::value_type;
 
     const int rev_rank   = m_pool_size - (m_pool_rank + 1);
-    const unsigned count = Traits::value_count(f);
+    const unsigned count = FunctorType::value_count(f);
 
     scalar_type *const work_value = (scalar_type *)reduce_memory();
 
@@ -325,7 +318,7 @@ class ThreadsExec {
 
       // Wait: Active -> ReductionAvailable (or ScanAvailable)
       Impl::spinwait_while_equal<int>(fan.m_pool_state, ThreadsExec::Active);
-      Join::join(f, work_value, fan.reduce_memory());
+      f.join(work_value, fan.reduce_memory());
     }
 
     // Copy reduction value to scan value before releasing from this phase.
@@ -347,8 +340,7 @@ class ThreadsExec {
         Impl::spinwait_while_equal<int>(th.m_pool_state,
                                         ThreadsExec::ReductionAvailable);
 
-        Join::join(f, work_value + count,
-                   ((scalar_type *)th.reduce_memory()) + count);
+        f.join(work_value + count, ((scalar_type *)th.reduce_memory()) + count);
       }
 
       // This thread has completed inclusive scan
@@ -388,7 +380,7 @@ class ThreadsExec {
         work_value[j] = src_value[j];
       }
     } else {
-      (void)Init::init(f, work_value);
+      f.init(work_value);
     }
 
     //--------------------------------
@@ -411,16 +403,12 @@ class ThreadsExec {
     }
   }
 
-  template <class FunctorType, class ArgTag>
+  template <class FunctorType>
   inline void scan_small(const FunctorType &f) {
-    using Traits = Kokkos::Impl::FunctorValueTraits<FunctorType, ArgTag>;
-    using Join   = Kokkos::Impl::FunctorValueJoin<FunctorType, ArgTag>;
-    using Init   = Kokkos::Impl::FunctorValueInit<FunctorType, ArgTag>;
-
-    using scalar_type = typename Traits::value_type;
+    using scalar_type = typename FunctorType::value_type;
 
     const int rev_rank   = m_pool_size - (m_pool_rank + 1);
-    const unsigned count = Traits::value_count(f);
+    const unsigned count = f.length();
 
     scalar_type *const work_value = (scalar_type *)reduce_memory();
 
@@ -452,9 +440,9 @@ class ThreadsExec {
           for (unsigned i = 0; i < count; ++i) {
             ptr[i] = ptr_prev[i + count];
           }
-          Join::join(f, ptr + count, ptr);
+          f.join(ptr + count, ptr);
         } else {
-          (void)Init::init(f, ptr);
+          f.init(ptr);
         }
         ptr_prev = ptr;
       }
@@ -474,6 +462,12 @@ class ThreadsExec {
 
   static int in_parallel();
   static void fence();
+  static void fence(const std::string &);
+  static void internal_fence(
+      Impl::fence_is_static is_static = Impl::fence_is_static::yes);
+  static void internal_fence(
+      const std::string &,
+      Impl::fence_is_static is_static = Impl::fence_is_static::yes);
   static bool sleep();
   static bool wake();
 
@@ -635,7 +629,12 @@ inline void Threads::print_configuration(std::ostream &s, const bool detail) {
   Impl::ThreadsExec::print_configuration(s, detail);
 }
 
-inline void Threads::impl_static_fence() { Impl::ThreadsExec::fence(); }
+inline void Threads::impl_static_fence() {
+  Impl::ThreadsExec::internal_fence(Impl::fence_is_static::yes);
+}
+inline void Threads::impl_static_fence(const std::string &name) {
+  Impl::ThreadsExec::internal_fence(name, Impl::fence_is_static::yes);
+}
 } /* namespace Kokkos */
 
 //----------------------------------------------------------------------------
@@ -683,36 +682,33 @@ class UniqueToken<Threads, UniqueTokenScope::Instance> {
   /// \brief acquire value such that 0 <= value < size()
   KOKKOS_INLINE_FUNCTION
   int acquire() const noexcept {
-#if defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    if (m_buffer == nullptr) {
-      return Threads::impl_thread_pool_rank();
-    } else {
-      const ::Kokkos::pair<int, int> result =
-          ::Kokkos::Impl::concurrent_bitset::acquire_bounded(
-              m_buffer, m_count, ::Kokkos::Impl::clock_tic() % m_count);
+    KOKKOS_IF_ON_HOST((
+        if (m_buffer == nullptr) {
+          return Threads::impl_thread_pool_rank();
+        } else {
+          const ::Kokkos::pair<int, int> result =
+              ::Kokkos::Impl::concurrent_bitset::acquire_bounded(
+                  m_buffer, m_count, ::Kokkos::Impl::clock_tic() % m_count);
 
-      if (result.first < 0) {
-        ::Kokkos::abort(
-            "UniqueToken<Threads> failure to acquire tokens, no tokens "
-            "available");
-      }
-      return result.first;
-    }
-#else
-    return 0;
-#endif
+          if (result.first < 0) {
+            ::Kokkos::abort(
+                "UniqueToken<Threads> failure to acquire tokens, no tokens "
+                "available");
+          }
+          return result.first;
+        }))
+
+    KOKKOS_IF_ON_DEVICE((return 0;))
   }
 
   /// \brief release a value acquired by generate
   KOKKOS_INLINE_FUNCTION
   void release(int i) const noexcept {
-#if defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    if (m_buffer != nullptr) {
+    KOKKOS_IF_ON_HOST((if (m_buffer != nullptr) {
       ::Kokkos::Impl::concurrent_bitset::release(m_buffer, i);
-    }
-#else
-    (void)i;
-#endif
+    }))
+
+    KOKKOS_IF_ON_DEVICE(((void)i;))
   }
 };
 
@@ -730,21 +726,17 @@ class UniqueToken<Threads, UniqueTokenScope::Global> {
   /// \brief upper bound for acquired values, i.e. 0 <= value < size()
   KOKKOS_INLINE_FUNCTION
   int size() const noexcept {
-#if defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    return Threads::impl_thread_pool_size();
-#else
-    return 0;
-#endif
+    KOKKOS_IF_ON_HOST((return Threads::impl_thread_pool_size();))
+
+    KOKKOS_IF_ON_DEVICE((return 0;))
   }
 
   /// \brief acquire value such that 0 <= value < size()
   KOKKOS_INLINE_FUNCTION
   int acquire() const noexcept {
-#if defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    return Threads::impl_thread_pool_rank();
-#else
-    return 0;
-#endif
+    KOKKOS_IF_ON_HOST((return Threads::impl_thread_pool_rank();))
+
+    KOKKOS_IF_ON_DEVICE((return 0;))
   }
 
   /// \brief release a value acquired by generate

@@ -405,7 +405,9 @@ class StaticCrsGraph {
     Kokkos::parallel_for("Kokkos::StaticCrsGraph::create_block_partitioning",
                          Kokkos::RangePolicy<execution_space>(0, numRows()),
                          partitioner);
-    typename device_type::execution_space().fence();
+    typename device_type::execution_space().fence(
+        "Kokkos::StaticCrsGraph::create_block_partitioning:: fence after "
+        "partition");
 
     row_block_offsets = block_offsets;
   }
@@ -469,8 +471,7 @@ struct StaticCrsGraphMaximumEntry {
   void init(value_type& update) const { update = 0; }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile value_type& update,
-            volatile const value_type& input) const {
+  void join(value_type& update, const value_type& input) const {
     if (update < input) update = input;
   }
 };

@@ -1,4 +1,5 @@
 #include <Kokkos_Core.hpp>
+#include <cstddef>
 
 namespace Test {
 
@@ -17,7 +18,7 @@ struct TestDeepCopy {
   static void reset_a_copy_and_b(
       Kokkos::View<char*, Kokkos::LayoutRight, MemorySpaceA> a_char_copy,
       Kokkos::View<char*, Kokkos::LayoutRight, MemorySpaceB> b_char) {
-    const int N = b_char.extent(0);
+    const int N = b_char.extent_int(0);
     Kokkos::parallel_for(
         "TestDeepCopy: FillA_copy", policyA_t(0, N),
         KOKKOS_LAMBDA(const int& i) { a_char_copy(i) = char(0); });
@@ -29,7 +30,7 @@ struct TestDeepCopy {
   static int compare_equal(
       Kokkos::View<char*, Kokkos::LayoutRight, MemorySpaceA> a_char_copy,
       Kokkos::View<char*, Kokkos::LayoutRight, MemorySpaceA> a_char) {
-    const int N = a_char.extent(0);
+    const int N = a_char.extent_int(0);
     int errors;
     Kokkos::parallel_reduce(
         "TestDeepCopy: FillA_copy", policyA_t(0, N),
@@ -62,7 +63,7 @@ struct TestDeepCopy {
     reset_a_copy_and_b(a_char_copy, b_char);
 
     {
-      int check = compare_equal(a_char_copy, a_char);
+      size_t check = compare_equal(a_char_copy, a_char);
       ASSERT_EQ(check, a_char.extent(0));
     }
 
@@ -74,12 +75,12 @@ struct TestDeepCopy {
       int b_begin = 0;
       int b_end   = 0;
       auto a      = Kokkos::subview(
-          a_char, std::pair<int, int>(a_begin, a_char.extent(0) - a_end));
+          a_char, std::pair<int, int>(a_begin, a_char.extent_int(0) - a_end));
       auto b = Kokkos::subview(
-          b_char, std::pair<int, int>(b_begin, b_char.extent(0) - b_end));
+          b_char, std::pair<int, int>(b_begin, b_char.extent_int(0) - b_end));
       auto a_copy = Kokkos::subview(
           a_char_copy,
-          std::pair<int, int>(a_begin, a_char_copy.extent(0) - a_end));
+          std::pair<int, int>(a_begin, a_char_copy.extent_int(0) - a_end));
       Kokkos::deep_copy(b, a);
       Kokkos::deep_copy(a_copy, b);
       int check = compare_equal(a_copy, a);
@@ -92,12 +93,12 @@ struct TestDeepCopy {
       int b_begin = 0;
       int b_end   = 5;
       auto a      = Kokkos::subview(
-          a_char, std::pair<int, int>(a_begin, a_char.extent(0) - a_end));
+          a_char, std::pair<int, int>(a_begin, a_char.extent_int(0) - a_end));
       auto b = Kokkos::subview(
-          b_char, std::pair<int, int>(b_begin, b_char.extent(0) - b_end));
+          b_char, std::pair<int, int>(b_begin, b_char.extent_int(0) - b_end));
       auto a_copy = Kokkos::subview(
           a_char_copy,
-          std::pair<int, int>(a_begin, a_char_copy.extent(0) - a_end));
+          std::pair<int, int>(a_begin, a_char_copy.extent_int(0) - a_end));
       Kokkos::deep_copy(b, a);
       Kokkos::deep_copy(a_copy, b);
       int check = compare_equal(a_copy, a);
@@ -110,12 +111,12 @@ struct TestDeepCopy {
       int b_begin = 3;
       int b_end   = 0;
       auto a      = Kokkos::subview(
-          a_char, std::pair<int, int>(a_begin, a_char.extent(0) - a_end));
+          a_char, std::pair<int, int>(a_begin, a_char.extent_int(0) - a_end));
       auto b = Kokkos::subview(
-          b_char, std::pair<int, int>(b_begin, b_char.extent(0) - b_end));
+          b_char, std::pair<int, int>(b_begin, b_char.extent_int(0) - b_end));
       auto a_copy = Kokkos::subview(
           a_char_copy,
-          std::pair<int, int>(a_begin, a_char_copy.extent(0) - a_end));
+          std::pair<int, int>(a_begin, a_char_copy.extent_int(0) - a_end));
       Kokkos::deep_copy(b, a);
       Kokkos::deep_copy(a_copy, b);
       int check = compare_equal(a_copy, a);
@@ -128,12 +129,12 @@ struct TestDeepCopy {
       int b_begin = 3;
       int b_end   = 6;
       auto a      = Kokkos::subview(
-          a_char, std::pair<int, int>(a_begin, a_char.extent(0) - a_end));
+          a_char, std::pair<int, int>(a_begin, a_char.extent_int(0) - a_end));
       auto b = Kokkos::subview(
-          b_char, std::pair<int, int>(b_begin, b_char.extent(0) - b_end));
+          b_char, std::pair<int, int>(b_begin, b_char.extent_int(0) - b_end));
       auto a_copy = Kokkos::subview(
           a_char_copy,
-          std::pair<int, int>(a_begin, a_char_copy.extent(0) - a_end));
+          std::pair<int, int>(a_begin, a_char_copy.extent_int(0) - a_end));
       Kokkos::deep_copy(b, a);
       Kokkos::deep_copy(a_copy, b);
       int check = compare_equal(a_copy, a);
@@ -146,12 +147,12 @@ struct TestDeepCopy {
       int b_begin = 3;
       int b_end   = 6;
       auto a      = Kokkos::subview(
-          a_char, std::pair<int, int>(a_begin, a_char.extent(0) - a_end));
+          a_char, std::pair<int, int>(a_begin, a_char.extent_int(0) - a_end));
       auto b = Kokkos::subview(
-          b_char, std::pair<int, int>(b_begin, b_char.extent(0) - b_end));
+          b_char, std::pair<int, int>(b_begin, b_char.extent_int(0) - b_end));
       auto a_copy = Kokkos::subview(
           a_char_copy,
-          std::pair<int, int>(a_begin, a_char_copy.extent(0) - a_end));
+          std::pair<int, int>(a_begin, a_char_copy.extent_int(0) - a_end));
       Kokkos::deep_copy(b, a);
       Kokkos::deep_copy(a_copy, b);
       int check = compare_equal(a_copy, a);
@@ -164,12 +165,12 @@ struct TestDeepCopy {
       int b_begin = 2;
       int b_end   = 6;
       auto a      = Kokkos::subview(
-          a_char, std::pair<int, int>(a_begin, a_char.extent(0) - a_end));
+          a_char, std::pair<int, int>(a_begin, a_char.extent_int(0) - a_end));
       auto b = Kokkos::subview(
-          b_char, std::pair<int, int>(b_begin, b_char.extent(0) - b_end));
+          b_char, std::pair<int, int>(b_begin, b_char.extent_int(0) - b_end));
       auto a_copy = Kokkos::subview(
           a_char_copy,
-          std::pair<int, int>(a_begin, a_char_copy.extent(0) - a_end));
+          std::pair<int, int>(a_begin, a_char_copy.extent_int(0) - a_end));
       Kokkos::deep_copy(b, a);
       Kokkos::deep_copy(a_copy, b);
       int check = compare_equal(a_copy, a);
@@ -182,12 +183,12 @@ struct TestDeepCopy {
       int b_begin = 0;
       int b_end   = 8;
       auto a      = Kokkos::subview(
-          a_char, std::pair<int, int>(a_begin, a_char.extent(0) - a_end));
+          a_char, std::pair<int, int>(a_begin, a_char.extent_int(0) - a_end));
       auto b = Kokkos::subview(
-          b_char, std::pair<int, int>(b_begin, b_char.extent(0) - b_end));
+          b_char, std::pair<int, int>(b_begin, b_char.extent_int(0) - b_end));
       auto a_copy = Kokkos::subview(
           a_char_copy,
-          std::pair<int, int>(a_begin, a_char_copy.extent(0) - a_end));
+          std::pair<int, int>(a_begin, a_char_copy.extent_int(0) - a_end));
       Kokkos::deep_copy(b, a);
       Kokkos::deep_copy(a_copy, b);
       int check = compare_equal(a_copy, a);
@@ -296,7 +297,7 @@ struct TestDeepCopyScalarConversion {
 
     int64_t errors = 0;
     Kokkos::deep_copy(errors, error_count);
-    ASSERT_TRUE(errors == 0);
+    ASSERT_EQ(errors, 0);
 
     Kokkos::deep_copy(view_s1_1d, static_cast<Scalar1>(0));
     Kokkos::deep_copy(view_s1_2d, static_cast<Scalar1>(0));
@@ -306,7 +307,7 @@ struct TestDeepCopyScalarConversion {
                                              Kokkos::IndexType<int64_t>>(0, N0),
                          *this);
     Kokkos::deep_copy(errors, error_count);
-    ASSERT_TRUE(errors > 0);
+    ASSERT_GT(errors, 0);
 
     Kokkos::deep_copy(error_count, 0);
     Kokkos::deep_copy(TEST_EXECSPACE(), view_s1_1d, view_s2_1d);
@@ -318,7 +319,7 @@ struct TestDeepCopyScalarConversion {
                          *this);
 
     Kokkos::deep_copy(errors, error_count);
-    ASSERT_TRUE(errors == 0);
+    ASSERT_EQ(errors, 0);
   }
 };
 }  // namespace Impl

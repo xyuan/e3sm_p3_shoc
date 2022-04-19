@@ -2,17 +2,13 @@
 KOKKOS_INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 KOKKOS_INCLUDE_DIRECTORIES(REQUIRED_DURING_INSTALLATION_TESTING ${CMAKE_CURRENT_SOURCE_DIR})
 KOKKOS_INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/../src )
+KOKKOS_INCLUDE_DIRECTORIES(${KOKKOS_SOURCE_DIR}/core/unit_test/category_files)
 
 foreach(Tag Threads;Serial;OpenMP;HPX;Cuda;HIP;SYCL)
-  # Because there is always an exception to the rule
-  if(Tag STREQUAL "Threads")
-    set(DEVICE "PTHREAD")
-  else()
-    string(TOUPPER ${Tag} DEVICE)
-  endif()
+  string(TOUPPER ${Tag} DEVICE)
   string(TOLOWER ${Tag} dir)
   # Add test for that backend if it is enabled
-  if(Kokkos_ENABLE_${DEVICE})
+  if(KOKKOS_ENABLE_${DEVICE})
     set(UnitTestSources UnitTestMain.cpp)
     set(dir ${CMAKE_CURRENT_BINARY_DIR}/${dir})
     file(MAKE_DIRECTORY ${dir})
@@ -27,6 +23,7 @@ foreach(Tag Threads;Serial;OpenMP;HPX;Cuda;HIP;SYCL)
         OffsetView
         ScatterView
         StaticCrsGraph
+        WithoutInitializing
         UnorderedMap
         Vector
         ViewCtorPropEmbeddedDim
@@ -41,11 +38,11 @@ foreach(Tag Threads;Serial;OpenMP;HPX;Cuda;HIP;SYCL)
       configure_file(${dir}/dummy.cpp ${file})
       list(APPEND UnitTestSources ${file})
     endforeach()
-    list(REMOVE_ITEM UnitTestSources
-        ${CMAKE_CURRENT_BINARY_DIR}/sycl/TestSYCL_Bitset.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/sycl/TestSYCL_ScatterView.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/sycl/TestSYCL_UnorderedMap.cpp
-        )
+    #fatal error C1128: number of sections exceeded object file format limit: compile with /bigobj
+    if(KOKKOS_ENABLE_CUDA AND WIN32)
+     LIST(REMOVE_ITEM UnitTestSources ${dir}/TestCuda_DynViewAPI_generic.cpp)
+    endif()
+
     KOKKOS_ADD_EXECUTABLE_AND_TEST(UnitTest_${Tag} SOURCES ${UnitTestSources})
   endif()
 endforeach()

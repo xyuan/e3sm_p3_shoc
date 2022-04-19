@@ -58,7 +58,6 @@
 #include <Kokkos_HBWSpace.hpp>
 #endif
 
-#include <HPX/Kokkos_HPX_ChunkedRoundRobinExecutor.hpp>
 #include <Kokkos_HostSpace.hpp>
 #include <Kokkos_Layout.hpp>
 #include <Kokkos_MemoryTraits.hpp>
@@ -66,27 +65,22 @@
 #include <Kokkos_ScratchSpace.hpp>
 #include <Kokkos_TaskScheduler.hpp>
 #include <impl/Kokkos_ConcurrentBitset.hpp>
-#include <impl/Kokkos_FunctorAdapter.hpp>
 #include <impl/Kokkos_FunctorAnalysis.hpp>
 #include <impl/Kokkos_Tools.hpp>
-#include <impl/Kokkos_Tags.hpp>
 #include <impl/Kokkos_TaskQueue.hpp>
 #include <impl/Kokkos_ExecSpaceInitializer.hpp>
 
 #include <KokkosExp_MDRangePolicy.hpp>
 
-#include <hpx/apply.hpp>
-#include <hpx/hpx_start.hpp>
-#include <hpx/include/util.hpp>
-#include <hpx/lcos/local/barrier.hpp>
-#include <hpx/lcos/local/latch.hpp>
-#include <hpx/parallel/algorithms/for_loop.hpp>
-#include <hpx/parallel/algorithms/reduce.hpp>
-#include <hpx/parallel/executors/static_chunk_size.hpp>
-#include <hpx/runtime.hpp>
-#include <hpx/runtime/threads/run_as_hpx_thread.hpp>
-#include <hpx/runtime/threads/threadmanager.hpp>
-#include <hpx/runtime/thread_pool_helpers.hpp>
+#include <hpx/local/algorithm.hpp>
+#include <hpx/local/barrier.hpp>
+#include <hpx/local/condition_variable.hpp>
+#include <hpx/local/execution.hpp>
+#include <hpx/local/future.hpp>
+#include <hpx/local/init.hpp>
+#include <hpx/local/mutex.hpp>
+#include <hpx/local/runtime.hpp>
+#include <hpx/local/thread.hpp>
 
 #include <Kokkos_UniqueToken.hpp>
 
@@ -94,7 +88,6 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
-#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -103,10 +96,8 @@
 //
 // - 0: The HPX way. Unfortunately, this comes with unnecessary
 //      overheads at the moment, so there is
-// - 1: The manual way. This way is more verbose and does not take advantage of
-//      e.g. parallel::for_loop in HPX but it is significantly faster in many
-//      benchmarks.
-// - 2: Like 1, but spawn tasks using for_loop and a custom executor.
+// - 1: The manual way. This uses for_loop, but only spawns one task per worker
+//      thread. This is significantly faster in most cases.
 //
 // In the long run 0 should be the preferred implementation, but until HPX is
 // improved 1 will be the default.
@@ -114,7 +105,7 @@
 #define KOKKOS_HPX_IMPLEMENTATION 1
 #endif
 
-#if (KOKKOS_HPX_IMPLEMENTATION < 0) || (KOKKOS_HPX_IMPLEMENTATION > 2)
+#if (KOKKOS_HPX_IMPLEMENTATION < 0) || (KOKKOS_HPX_IMPLEMENTATION > 1)
 #error "You have chosen an invalid value for KOKKOS_HPX_IMPLEMENTATION"
 #endif
 
@@ -203,33 +194,40 @@ class thread_buffer {
 
 namespace Experimental {
 class HPX {
+ public:
+  static constexpr uint32_t impl_default_instance_id() { return 1; }
+
  private:
   static bool m_hpx_initialized;
-  static std::atomic<uint32_t> m_next_instance_id;
-  uint32_t m_instance_id = 0;
+  uint32_t m_instance_id = impl_default_instance_id();
 
 #if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
+  static std::atomic<uint32_t> m_next_instance_id;
+
  public:
-  enum class instance_mode { global, independent };
-  instance_mode m_mode;
+  enum class instance_mode { default_, independent };
 
  private:
-  static std::atomic<uint32_t> m_active_parallel_region_count;
+  static uint32_t m_active_parallel_region_count;
+  static hpx::spinlock m_active_parallel_region_count_mutex;
+  static hpx::condition_variable_any m_active_parallel_region_count_cond;
 
   struct instance_data {
     instance_data() = default;
     instance_data(hpx::shared_future<void> future) : m_future(future) {}
     Kokkos::Impl::thread_buffer m_buffer;
     hpx::shared_future<void> m_future = hpx::make_ready_future<void>();
+    hpx::spinlock m_future_mutex;
   };
 
   mutable std::shared_ptr<instance_data> m_independent_instance_data;
-  static instance_data m_global_instance_data;
+  static instance_data m_default_instance_data;
 
   std::reference_wrapper<Kokkos::Impl::thread_buffer> m_buffer;
   std::reference_wrapper<hpx::shared_future<void>> m_future;
+  std::reference_wrapper<hpx::spinlock> m_future_mutex;
 #else
-  static Kokkos::Impl::thread_buffer m_global_buffer;
+  static Kokkos::Impl::thread_buffer m_default_buffer;
 #endif
 
  public:
@@ -243,53 +241,40 @@ class HPX {
 #if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
   HPX()
   noexcept
-      : m_instance_id(0),
-        m_mode(instance_mode::global),
-        m_buffer(m_global_instance_data.m_buffer),
-        m_future(m_global_instance_data.m_future) {}
+      : m_instance_id(impl_default_instance_id()),
+        m_buffer(m_default_instance_data.m_buffer),
+        m_future(m_default_instance_data.m_future),
+        m_future_mutex(m_default_instance_data.m_future_mutex) {}
 
   HPX(instance_mode mode)
-      : m_instance_id(mode == instance_mode::independent ? m_next_instance_id++
-                                                         : 0),
-        m_mode(mode),
+      : m_instance_id(mode == instance_mode::independent
+                          ? m_next_instance_id++
+                          : impl_default_instance_id()),
         m_independent_instance_data(mode == instance_mode::independent
                                         ? (new instance_data())
                                         : nullptr),
         m_buffer(mode == instance_mode::independent
                      ? m_independent_instance_data->m_buffer
-                     : m_global_instance_data.m_buffer),
+                     : m_default_instance_data.m_buffer),
         m_future(mode == instance_mode::independent
                      ? m_independent_instance_data->m_future
-                     : m_global_instance_data.m_future) {}
+                     : m_default_instance_data.m_future),
+        m_future_mutex(mode == instance_mode::independent
+                           ? m_independent_instance_data->m_future_mutex
+                           : m_default_instance_data.m_future_mutex) {}
 
   HPX(hpx::shared_future<void> future)
       : m_instance_id(m_next_instance_id++),
-        m_mode(instance_mode::independent),
 
         m_independent_instance_data(new instance_data(future)),
         m_buffer(m_independent_instance_data->m_buffer),
-        m_future(m_independent_instance_data->m_future) {}
+        m_future(m_independent_instance_data->m_future),
+        m_future_mutex(m_independent_instance_data->m_future_mutex) {}
 
-  HPX(const HPX &other)
-      : m_instance_id(other.m_instance_id),
-        m_mode(other.m_mode),
-        m_independent_instance_data(other.m_independent_instance_data),
-        m_buffer(other.m_buffer),
-        m_future(other.m_future) {}
-
-  HPX &operator=(const HPX &other) {
-    m_instance_id =
-        other.m_mode == instance_mode::independent ? m_next_instance_id++ : 0;
-    m_mode                      = other.m_mode;
-    m_independent_instance_data = other.m_independent_instance_data;
-    m_buffer                    = m_mode == instance_mode::independent
-                   ? m_independent_instance_data->m_buffer
-                   : m_global_instance_data.m_buffer;
-    m_future = m_mode == instance_mode::independent
-                   ? m_independent_instance_data->m_future
-                   : m_global_instance_data.m_future;
-    return *this;
-  }
+  HPX(HPX &&other) = default;
+  HPX &operator=(HPX &&other) = default;
+  HPX(const HPX &other)       = default;
+  HPX &operator=(const HPX &other) = default;
 #else
   HPX() noexcept {}
 #endif
@@ -310,36 +295,66 @@ class HPX {
 
 #if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
   static void impl_decrement_active_parallel_region_count() {
-    --m_active_parallel_region_count;
+    std::unique_lock<hpx::spinlock> l(m_active_parallel_region_count_mutex);
+    if (--m_active_parallel_region_count == 0) {
+      l.unlock();
+      m_active_parallel_region_count_cond.notify_all();
+    };
   }
 
   static void impl_increment_active_parallel_region_count() {
+    std::unique_lock<hpx::spinlock> l(m_active_parallel_region_count_mutex);
     ++m_active_parallel_region_count;
   }
-
-  void impl_fence_instance() const {
-    if (hpx::threads::get_self_ptr() == nullptr) {
-      hpx::threads::run_as_hpx_thread([this]() { impl_get_future().wait(); });
-    } else {
-      impl_get_future().wait();
-    }
-  }
-
-  void impl_fence_all_instances() const {
-    hpx::util::yield_while(
-        []() { return m_active_parallel_region_count.load() != 0; });
-  }
 #endif
 
-  void fence() const {
+  void impl_fence_instance(const std::string &name =
+                               "Kokkos::Experimental::HPX::impl_fence_instance:"
+                               " Unnamed Instance Fence") const {
+    Kokkos::Tools::Experimental::Impl::profile_fence_event<
+        Kokkos::Experimental::HPX>(
+        name,
+        Kokkos::Tools::Experimental::Impl::DirectFenceIDHandle{
+            impl_instance_id()},
+        [&]() {
 #if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
-    if (m_mode == instance_mode::global) {
-      impl_fence_all_instances();
-    } else {
-      impl_fence_instance();
-    }
+          impl_get_future().wait();
+          // Reset the future to free variables that may have been captured in
+          // parallel regions.
+          impl_get_future() = hpx::make_ready_future<void>();
 #endif
+        });
   }
+
+  static void impl_fence_global(const std::string &name =
+                                    "Kokkos::Experimental::HPX::impl_fence_"
+                                    "global: Unnamed Global Fence") {
+    Kokkos::Tools::Experimental::Impl::profile_fence_event<
+        Kokkos::Experimental::HPX>(
+        name,
+        Kokkos::Tools::Experimental::SpecialSynchronizationCases::
+            GlobalDeviceSynchronization,
+        [&]() {
+#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
+          std::unique_lock<hpx::spinlock> l(
+              m_active_parallel_region_count_mutex);
+          m_active_parallel_region_count_cond.wait(
+              l, [&]() { return m_active_parallel_region_count == 0; });
+          // Reset the future to free variables that may have been captured in
+          // parallel regions (however, we don't have access to futures from
+          // instances other than the default instances, they will only be
+          // released by impl_fence_instance).
+          HPX().impl_get_future() = hpx::make_ready_future<void>();
+#endif
+        });
+  }
+
+  static hpx::execution::parallel_executor impl_get_executor() {
+    return hpx::execution::parallel_executor();
+  }
+
+  void fence() const { impl_fence_instance(); }
+  void fence(const std::string &name) const { impl_fence_instance(name); }
 
   static bool is_asynchronous(HPX const & = HPX()) noexcept {
 #if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
@@ -356,15 +371,17 @@ class HPX {
     return std::vector<HPX>();
   }
 
+#ifdef KOKKOS_ENABLE_DEPRECATED_CODE_3
   template <typename F>
-  static void partition_master(F const &, int requested_num_partitions = 0,
-                               int = 0) {
+  KOKKOS_DEPRECATED static void partition_master(
+      F const &, int requested_num_partitions = 0, int = 0) {
     if (requested_num_partitions > 1) {
       Kokkos::abort(
           "Kokkos::Experimental::HPX::partition_master: can't partition an "
           "HPX instance\n");
     }
   }
+#endif
 
   static int concurrency();
   static void impl_initialize(int thread_count);
@@ -418,13 +435,17 @@ class HPX {
 #if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     return m_buffer.get();
 #else
-    return m_global_buffer;
+    return m_default_buffer;
 #endif
   }
 
 #if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
   hpx::shared_future<void> &impl_get_future() const noexcept {
     return m_future;
+  }
+
+  hpx::spinlock &impl_get_future_mutex() const noexcept {
+    return m_future_mutex;
   }
 #endif
 
@@ -439,6 +460,27 @@ class HPX {
 
       HPX::impl_decrement_active_parallel_region_count();
     }
+  };
+
+  // This struct is identical to the above except it does not reset the shared
+  // data. It does, however, still decrement the parallel region count. It is
+  // meant for use in parallel regions which do not capture the execution space
+  // instance.
+  struct KOKKOS_ATTRIBUTE_NODISCARD reset_count_on_exit_parallel {
+    reset_count_on_exit_parallel() {}
+    ~reset_count_on_exit_parallel() {
+      HPX::impl_decrement_active_parallel_region_count();
+    }
+  };
+#else
+  struct KOKKOS_ATTRIBUTE_NODISCARD reset_on_exit_parallel {
+    reset_on_exit_parallel(HPX const &) {}
+    ~reset_on_exit_parallel() {}
+  };
+
+  struct KOKKOS_ATTRIBUTE_NODISCARD reset_count_on_exit_parallel {
+    reset_count_on_exit_parallel() {}
+    ~reset_count_on_exit_parallel() {}
   };
 #endif
 
@@ -464,6 +506,7 @@ class HPXSpaceInitializer : public ExecSpaceInitializerBase {
   void initialize(const InitArguments &args) final;
   void finalize(const bool) final;
   void fence() final;
+  void fence(const std::string &) final;
   void print_configuration(std::ostream &msg, const bool detail) final;
 };
 
@@ -474,24 +517,24 @@ inline void dispatch_execute_task(Closure *closure,
                                   bool force_synchronous = false) {
   Kokkos::Experimental::HPX::impl_increment_active_parallel_region_count();
 
-  if (hpx::threads::get_self_ptr() == nullptr) {
-    hpx::threads::run_as_hpx_thread([closure, &instance]() {
-      hpx::shared_future<void> &fut = instance.impl_get_future();
-      Closure closure_copy          = *closure;
-      fut = fut.then([closure_copy](hpx::shared_future<void> &&) {
-        closure_copy.execute_task();
-      });
-    });
-  } else {
+  Closure closure_copy = *closure;
+
+  {
+    std::unique_lock<hpx::spinlock> l(instance.impl_get_future_mutex());
+    hpx::util::ignore_lock(&instance.impl_get_future_mutex());
     hpx::shared_future<void> &fut = instance.impl_get_future();
-    Closure closure_copy          = *closure;
-    fut = fut.then([closure_copy](hpx::shared_future<void> &&) {
-      closure_copy.execute_task();
-    });
+
+    fut = fut.then(hpx::execution::parallel_executor(
+                       hpx::threads::thread_schedule_hint(0)),
+                   [closure_copy](hpx::shared_future<void> &&) {
+                     return closure_copy.execute_task();
+                   });
   }
 
   if (force_synchronous) {
-    instance.fence();
+    instance.fence(
+        "Kokkos::Experimental::Impl::HPX::dispatch_execute_task: fence due to "
+        "forced syncronizations");
   }
 }
 #else
@@ -499,15 +542,7 @@ template <typename Closure>
 inline void dispatch_execute_task(Closure *closure,
                                   Kokkos::Experimental::HPX const &,
                                   bool = false) {
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
-  Kokkos::Experimental::HPX::impl_increment_active_parallel_region_count();
-#endif
-
-  if (hpx::threads::get_self_ptr() == nullptr) {
-    hpx::threads::run_as_hpx_thread([closure]() { closure->execute_task(); });
-  } else {
-    closure->execute_task();
-  }
+  closure->execute_task();
 }
 #endif
 }  // namespace Impl
@@ -523,14 +558,6 @@ struct MemorySpaceAccess<Kokkos::Experimental::HPX::memory_space,
   enum : bool { deepcopy = false };
 };
 
-template <>
-struct VerifyExecutionCanAccessMemorySpace<
-    Kokkos::Experimental::HPX::memory_space,
-    Kokkos::Experimental::HPX::scratch_memory_space> {
-  enum : bool { value = true };
-  inline static void verify(void) {}
-  inline static void verify(const void *) {}
-};
 }  // namespace Impl
 }  // namespace Kokkos
 
@@ -575,36 +602,33 @@ class UniqueToken<HPX, UniqueTokenScope::Instance> {
   /// \brief acquire value such that 0 <= value < size()
   KOKKOS_INLINE_FUNCTION
   int acquire() const noexcept {
-#if defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    if (m_buffer == nullptr) {
-      return execution_space::impl_hardware_thread_id();
-    } else {
-      const ::Kokkos::pair<int, int> result =
-          ::Kokkos::Impl::concurrent_bitset::acquire_bounded(
-              m_buffer, m_count, ::Kokkos::Impl::clock_tic() % m_count);
+    KOKKOS_IF_ON_HOST((
+        if (m_buffer == nullptr) {
+          return execution_space::impl_hardware_thread_id();
+        } else {
+          const ::Kokkos::pair<int, int> result =
+              ::Kokkos::Impl::concurrent_bitset::acquire_bounded(
+                  m_buffer, m_count, ::Kokkos::Impl::clock_tic() % m_count);
 
-      if (result.first < 0) {
-        ::Kokkos::abort(
-            "UniqueToken<HPX> failure to acquire tokens, no tokens "
-            "available");
-      }
-      return result.first;
-    }
-#else
-    return 0;
-#endif
+          if (result.first < 0) {
+            ::Kokkos::abort(
+                "UniqueToken<HPX> failure to acquire tokens, no tokens "
+                "available");
+          }
+          return result.first;
+        }))
+
+    KOKKOS_IF_ON_DEVICE((return 0;))
   }
 
   /// \brief release a value acquired by generate
   KOKKOS_INLINE_FUNCTION
   void release(int i) const noexcept {
-#if defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    if (m_buffer != nullptr) {
+    KOKKOS_IF_ON_HOST((if (m_buffer != nullptr) {
       ::Kokkos::Impl::concurrent_bitset::release(m_buffer, i);
-    }
-#else
-    (void)i;
-#endif
+    }))
+
+    KOKKOS_IF_ON_DEVICE(((void)i;))
   }
 };
 
@@ -685,16 +709,13 @@ struct HPXTeamMember {
   void team_barrier() const {}
 
   template <class ValueType>
-  KOKKOS_INLINE_FUNCTION void team_broadcast(ValueType &, const int &) const {
-    static_assert(std::is_trivially_default_constructible<ValueType>(),
-                  "Only trivial constructible types can be broadcasted");
-  }
+  KOKKOS_INLINE_FUNCTION void team_broadcast(ValueType &, const int &) const {}
 
   template <class Closure, class ValueType>
-  KOKKOS_INLINE_FUNCTION void team_broadcast(const Closure &, ValueType &,
+  KOKKOS_INLINE_FUNCTION void team_broadcast(const Closure &closure,
+                                             ValueType &value,
                                              const int &) const {
-    static_assert(std::is_trivially_default_constructible<ValueType>(),
-                  "Only trivial constructible types can be broadcasted");
+    closure(value);
   }
 
   template <class ValueType, class JoinOp>
@@ -722,8 +743,6 @@ struct HPXTeamMember {
 template <class... Properties>
 class TeamPolicyInternal<Kokkos::Experimental::HPX, Properties...>
     : public PolicyTraits<Properties...> {
-  using traits = PolicyTraits<Properties...>;
-
   int m_league_size;
   int m_team_size;
   std::size_t m_team_scratch_size[2];
@@ -731,6 +750,8 @@ class TeamPolicyInternal<Kokkos::Experimental::HPX, Properties...>
   int m_chunk_size;
 
  public:
+  using traits = PolicyTraits<Properties...>;
+
   //! Tag this class as a kokkos execution policy
   using execution_policy = TeamPolicyInternal;
 
@@ -883,7 +904,7 @@ class TeamPolicyInternal<Kokkos::Experimental::HPX, Properties...>
     init(league_size_request, 1);
   }
 
-  TeamPolicyInternal(const typename traits::execution_space &space,
+  TeamPolicyInternal(const typename traits::execution_space &,
                      int league_size_request,
                      const Kokkos::AUTO_t &, /* team_size_request */
                      const Kokkos::AUTO_t & /* vector_length_request */)
@@ -893,7 +914,7 @@ class TeamPolicyInternal<Kokkos::Experimental::HPX, Properties...>
     init(league_size_request, 1);
   }
 
-  TeamPolicyInternal(const typename traits::execution_space &space,
+  TeamPolicyInternal(const typename traits::execution_space &,
                      int league_size_request, int team_size_request,
                      const Kokkos::AUTO_t & /* vector_length_request */
                      )
@@ -971,6 +992,19 @@ class TeamPolicyInternal<Kokkos::Experimental::HPX, Properties...>
 namespace Kokkos {
 namespace Impl {
 
+template <typename Policy>
+typename Policy::member_type get_hpx_adjusted_chunk_size(Policy const &policy) {
+  const int concurrency = Kokkos::Experimental::HPX::concurrency();
+  const typename Policy::member_type n        = policy.end() - policy.begin();
+  typename Policy::member_type new_chunk_size = policy.chunk_size();
+
+  while (n >= 4 * concurrency * new_chunk_size) {
+    new_chunk_size *= 2;
+  }
+
+  return new_chunk_size;
+}
+
 template <class FunctorType, class... Traits>
 class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>,
                   Kokkos::Experimental::HPX> {
@@ -1022,59 +1056,31 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>,
 
   void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_policy.space());
-#endif
+
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
+
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
 
 #if KOKKOS_HPX_IMPLEMENTATION == 0
-    using hpx::parallel::for_loop;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
+    using hpx::for_loop;
 
-    for_loop(par.with(static_chunk_size(m_policy.chunk_size())),
+    for_loop(par.on(exec).with(static_chunk_size(m_policy.chunk_size())),
              m_policy.begin(), m_policy.end(), [this](const Member i) {
                execute_functor<WorkTag>(m_functor, i);
              });
 
 #elif KOKKOS_HPX_IMPLEMENTATION == 1
-    using hpx::apply;
-    using hpx::lcos::local::latch;
+    using hpx::for_loop_strided;
 
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    latch num_tasks_remaining(num_tasks);
-    ChunkedRoundRobinExecutor exec(num_tasks);
-
-    for (Member i_begin = m_policy.begin(); i_begin < m_policy.end();
-         i_begin += m_policy.chunk_size()) {
-      apply(exec, [this, &num_tasks_remaining, i_begin]() {
-        const Member i_end =
-            (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
-        execute_functor_range<WorkTag>(m_functor, i_begin, i_end);
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
-
-#elif KOKKOS_HPX_IMPLEMENTATION == 2
-    using hpx::parallel::for_loop_strided;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
-
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    ChunkedRoundRobinExecutor exec(num_tasks);
+    const Member chunk_size = get_hpx_adjusted_chunk_size(m_policy);
 
     for_loop_strided(
-        par.on(exec).with(static_chunk_size(1)), m_policy.begin(),
-        m_policy.end(), m_policy.chunk_size(), [this](const Member i_begin) {
-          const Member i_end =
-              (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
+        par.on(exec), m_policy.begin(), m_policy.end(), chunk_size,
+        [this, chunk_size](const Member i_begin) {
+          const Member i_end = (std::min)(i_begin + chunk_size, m_policy.end());
           execute_functor_range<WorkTag>(m_functor, i_begin, i_end);
         });
 #endif
@@ -1106,72 +1112,52 @@ class ParallelFor<FunctorType, Kokkos::MDRangePolicy<Traits...>,
 
   inline void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_mdr_policy.space());
-#endif
+
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
+
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
 
 #if KOKKOS_HPX_IMPLEMENTATION == 0
-    using hpx::parallel::for_loop;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
+    using hpx::for_loop;
 
-    for_loop(par.with(static_chunk_size(m_policy.chunk_size())),
+    for_loop(par.on(exec).with(
+                 static_chunk_size(get_hpx_adjusted_chunk_size(m_policy))),
              m_policy.begin(), m_policy.end(), [this](const Member i) {
                iterate_type(m_mdr_policy, m_functor)(i);
              });
 
 #elif KOKKOS_HPX_IMPLEMENTATION == 1
-    using hpx::apply;
-    using hpx::lcos::local::latch;
+    using hpx::for_loop_strided;
 
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    latch num_tasks_remaining(num_tasks);
-    ChunkedRoundRobinExecutor exec(num_tasks);
+    const Member chunk_size = get_hpx_adjusted_chunk_size(m_policy);
 
-    for (Member i_begin = m_policy.begin(); i_begin < m_policy.end();
-         i_begin += m_policy.chunk_size()) {
-      apply(exec, [this, &num_tasks_remaining, i_begin]() {
-        const Member i_end =
-            (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
-        for (Member i = i_begin; i < i_end; ++i) {
-          iterate_type(m_mdr_policy, m_functor)(i);
-        }
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
-
-#elif KOKKOS_HPX_IMPLEMENTATION == 2
-    using hpx::parallel::for_loop_strided;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
-
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    ChunkedRoundRobinExecutor exec(num_tasks);
-
-    for_loop_strided(
-        par.on(exec).with(static_chunk_size(1)), m_policy.begin(),
-        m_policy.end(), m_policy.chunk_size(), [this](const Member i_begin) {
-          const Member i_end =
-              (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
-          for (Member i = i_begin; i < i_end; ++i) {
-            iterate_type(m_mdr_policy, m_functor)(i);
-          }
-        });
+    for_loop_strided(par.on(exec), m_policy.begin(), m_policy.end(), chunk_size,
+                     [this, chunk_size](const Member i_begin) {
+                       const Member i_end =
+                           (std::min)(i_begin + chunk_size, m_policy.end());
+                       for (Member i = i_begin; i < i_end; ++i) {
+                         iterate_type(m_mdr_policy, m_functor)(i);
+                       }
+                     });
 #endif
   }
 
   inline ParallelFor(const FunctorType &arg_functor, MDRangePolicy arg_policy)
       : m_functor(arg_functor),
         m_mdr_policy(arg_policy),
-        m_policy(Policy(0, m_mdr_policy.m_num_tiles).set_chunk_size(1)) {}
+        m_policy(Policy(0, arg_policy.m_num_tiles).set_chunk_size(1)) {}
+  template <typename Policy, typename Functor>
+  static int max_tile_size_product(const Policy &, const Functor &) {
+    /**
+     * 1024 here is just our guess for a reasonable max tile size,
+     * it isn't a hardware constraint. If people see a use for larger
+     * tile size products, we're happy to change this.
+     */
+    return 1024;
+  }
 };
 }  // namespace Impl
 }  // namespace Kokkos
@@ -1186,20 +1172,13 @@ class ParallelReduce<FunctorType, Kokkos::RangePolicy<Traits...>, ReducerType,
   using WorkTag   = typename Policy::work_tag;
   using WorkRange = typename Policy::WorkRange;
   using Member    = typename Policy::member_type;
-  using Analysis =
-      FunctorAnalysis<FunctorPatternInterface::REDUCE, Policy, FunctorType>;
   using ReducerConditional =
       Kokkos::Impl::if_c<std::is_same<InvalidType, ReducerType>::value,
                          FunctorType, ReducerType>;
   using ReducerTypeFwd = typename ReducerConditional::type;
-  using WorkTagFwd =
-      typename Kokkos::Impl::if_c<std::is_same<InvalidType, ReducerType>::value,
-                                  WorkTag, void>::type;
-  using ValueInit  = Kokkos::Impl::FunctorValueInit<ReducerTypeFwd, WorkTagFwd>;
-  using ValueFinal = Kokkos::Impl::FunctorFinal<ReducerTypeFwd, WorkTagFwd>;
-  using ValueJoin  = Kokkos::Impl::FunctorValueJoin<ReducerTypeFwd, WorkTagFwd>;
-  using ValueOps   = Kokkos::Impl::FunctorValueOps<ReducerTypeFwd, WorkTagFwd>;
-  using value_type = typename Analysis::value_type;
+  using Analysis =
+      FunctorAnalysis<FunctorPatternInterface::REDUCE, Policy, ReducerTypeFwd>;
+  using value_type     = typename Analysis::value_type;
   using pointer_type   = typename Analysis::pointer_type;
   using reference_type = typename Analysis::reference_type;
 
@@ -1313,7 +1292,7 @@ class ParallelReduce<FunctorType, Kokkos::RangePolicy<Traits...>, ReducerType,
     }
 
     reference_type reference() const {
-      return ValueOps::reference(
+      return Analysis::Reducer::reference(
           reinterpret_cast<pointer_type>(m_value_buffer));
     }
   };
@@ -1322,10 +1301,11 @@ class ParallelReduce<FunctorType, Kokkos::RangePolicy<Traits...>, ReducerType,
   void execute() const {
     if (m_policy.end() <= m_policy.begin()) {
       if (m_result_ptr) {
-        ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                        m_result_ptr);
-        ValueFinal::final(ReducerConditional::select(m_functor, m_reducer),
-                          m_result_ptr);
+        typename Analysis::Reducer final_reducer(
+            &ReducerConditional::select(m_functor, m_reducer));
+
+        final_reducer.init(m_result_ptr);
+        final_reducer.final(m_result_ptr);
       }
       return;
     }
@@ -1334,40 +1314,42 @@ class ParallelReduce<FunctorType, Kokkos::RangePolicy<Traits...>, ReducerType,
 
   inline void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_policy.space());
-#endif
+
+    typename Analysis::Reducer final_reducer(
+        &ReducerConditional::select(m_functor, m_reducer));
 
     const std::size_t value_size =
         Analysis::value_size(ReducerConditional::select(m_functor, m_reducer));
+
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
+
+    using hpx::for_loop;
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
 
 #if KOKKOS_HPX_IMPLEMENTATION == 0
     // NOTE: This version makes the most use of HPX functionality, but
     // requires the struct value_type_wrapper to handle different
     // reference_types. It is also significantly slower than the version
     // below due to not reusing the buffer used by other functions.
-    using hpx::parallel::for_loop;
     using hpx::parallel::reduction;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
 
     value_type_wrapper final_value(value_size);
     value_type_wrapper identity(value_size);
 
-    ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                    final_value.pointer());
-    ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                    identity.pointer());
+    final_reducer.init(final_value.pointer());
+    final_reducer.init(identity.pointer());
 
-    for_loop(par.with(static_chunk_size(m_policy.chunk_size())),
+    for_loop(par.on(exec).with(
+                 static_chunk_size(get_hpx_adjusted_chunk_size(m_policy))),
              m_policy.begin(), m_policy.end(),
              reduction(final_value, identity,
-                       [this](value_type_wrapper &a,
-                              value_type_wrapper &b) -> value_type_wrapper & {
-                         ValueJoin::join(
-                             ReducerConditional::select(m_functor, m_reducer),
-                             a.pointer(), b.pointer());
+                       [final_reducer](
+                           value_type_wrapper &a,
+                           value_type_wrapper &b) -> value_type_wrapper & {
+                         final_reducer.join(a.pointer(), b.pointer());
                          return a;
                        }),
              [this](Member i, value_type_wrapper &update) {
@@ -1377,112 +1359,41 @@ class ParallelReduce<FunctorType, Kokkos::RangePolicy<Traits...>, ReducerType,
     pointer_type final_value_ptr = final_value.pointer();
 
 #elif KOKKOS_HPX_IMPLEMENTATION == 1
+    using hpx::for_loop_strided;
+
     const int num_worker_threads = Kokkos::Experimental::HPX::concurrency();
 
     thread_buffer &buffer = m_policy.space().impl_get_buffer();
     buffer.resize(num_worker_threads, value_size);
 
-    using hpx::apply;
-    using hpx::lcos::local::latch;
-
-    {
-      latch num_tasks_remaining(num_worker_threads);
-      ChunkedRoundRobinExecutor exec(num_worker_threads);
-
-      for (int t = 0; t < num_worker_threads; ++t) {
-        apply(exec, [this, &num_tasks_remaining, &buffer, t]() {
-          ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                          reinterpret_cast<pointer_type>(buffer.get(t)));
-
-          num_tasks_remaining.count_down(1);
+    for_loop(
+        par.on(exec).with(static_chunk_size(1)), 0, num_worker_threads,
+        [&buffer, final_reducer ](const int t) noexcept {
+          final_reducer.init(reinterpret_cast<pointer_type>(buffer.get(t)));
         });
-      }
 
-      num_tasks_remaining.wait();
-    }
-
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    latch num_tasks_remaining(num_tasks);
-    ChunkedRoundRobinExecutor exec(num_tasks);
-
-    for (Member i_begin = m_policy.begin(); i_begin < m_policy.end();
-         i_begin += m_policy.chunk_size()) {
-      apply(exec, [this, &num_tasks_remaining, &buffer, i_begin]() {
-        reference_type update =
-            ValueOps::reference(reinterpret_cast<pointer_type>(buffer.get(
-                Kokkos::Experimental::HPX::impl_hardware_thread_id())));
-        const Member i_end =
-            (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
-        execute_functor_range<WorkTag>(update, i_begin, i_end);
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
-
-    for (int i = 1; i < num_worker_threads; ++i) {
-      ValueJoin::join(ReducerConditional::select(m_functor, m_reducer),
-                      reinterpret_cast<pointer_type>(buffer.get(0)),
-                      reinterpret_cast<pointer_type>(buffer.get(i)));
-    }
-
-    pointer_type final_value_ptr =
-        reinterpret_cast<pointer_type>(buffer.get(0));
-
-#elif KOKKOS_HPX_IMPLEMENTATION == 2
-    const int num_worker_threads = Kokkos::Experimental::HPX::concurrency();
-
-    thread_buffer &buffer = m_policy.space().impl_get_buffer();
-    buffer.resize(num_worker_threads, value_size);
-
-    using hpx::parallel::for_loop;
-    using hpx::parallel::for_loop_strided;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
-
-    {
-      ChunkedRoundRobinExecutor exec(num_worker_threads);
-
-      for_loop(par.on(exec).with(static_chunk_size(1)), std::size_t(0),
-               num_worker_threads, [this, &buffer](const std::size_t t) {
-                 ValueInit::init(
-                     ReducerConditional::select(m_functor, m_reducer),
-                     reinterpret_cast<pointer_type>(buffer.get(t)));
-               });
-    }
-
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    ChunkedRoundRobinExecutor exec(num_tasks);
+    const Member chunk_size = get_hpx_adjusted_chunk_size(m_policy);
 
     for_loop_strided(
-        par.on(exec).with(static_chunk_size(1)), m_policy.begin(),
-        m_policy.end(), m_policy.chunk_size(),
-        [this, &buffer](const Member i_begin) {
-          reference_type update =
-              ValueOps::reference(reinterpret_cast<pointer_type>(buffer.get(
+        par.on(exec), m_policy.begin(), m_policy.end(), chunk_size,
+        [this, &buffer, chunk_size](const Member i_begin) {
+          reference_type update = Analysis::Reducer::reference(
+              reinterpret_cast<pointer_type>(buffer.get(
                   Kokkos::Experimental::HPX::impl_hardware_thread_id())));
-          const Member i_end =
-              (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
+          const Member i_end = (std::min)(i_begin + chunk_size, m_policy.end());
           execute_functor_range<WorkTag>(update, i_begin, i_end);
         });
 
     for (int i = 1; i < num_worker_threads; ++i) {
-      ValueJoin::join(ReducerConditional::select(m_functor, m_reducer),
-                      reinterpret_cast<pointer_type>(buffer.get(0)),
-                      reinterpret_cast<pointer_type>(buffer.get(i)));
+      final_reducer.join(reinterpret_cast<pointer_type>(buffer.get(0)),
+                         reinterpret_cast<pointer_type>(buffer.get(i)));
     }
 
     pointer_type final_value_ptr =
         reinterpret_cast<pointer_type>(buffer.get(0));
 #endif
 
-    Kokkos::Impl::FunctorFinal<ReducerTypeFwd, WorkTagFwd>::final(
-        ReducerConditional::select(m_functor, m_reducer), final_value_ptr);
+    final_reducer.final(final_value_ptr);
 
     if (m_result_ptr != nullptr) {
       const int n = Analysis::value_count(
@@ -1499,7 +1410,7 @@ class ParallelReduce<FunctorType, Kokkos::RangePolicy<Traits...>, ReducerType,
       const FunctorType &arg_functor, Policy arg_policy,
       const ViewType &arg_view,
       typename std::enable_if<Kokkos::is_view<ViewType>::value &&
-                                  !Kokkos::is_reducer_type<ReducerType>::value,
+                                  !Kokkos::is_reducer<ReducerType>::value,
                               void *>::type = nullptr)
       : m_functor(arg_functor),
         m_policy(arg_policy),
@@ -1525,19 +1436,13 @@ class ParallelReduce<FunctorType, Kokkos::MDRangePolicy<Traits...>, ReducerType,
   using WorkTag       = typename MDRangePolicy::work_tag;
   using WorkRange     = typename Policy::WorkRange;
   using Member        = typename Policy::member_type;
-  using Analysis      = FunctorAnalysis<FunctorPatternInterface::REDUCE,
-                                   MDRangePolicy, FunctorType>;
   using ReducerConditional =
       Kokkos::Impl::if_c<std::is_same<InvalidType, ReducerType>::value,
                          FunctorType, ReducerType>;
   using ReducerTypeFwd = typename ReducerConditional::type;
-  using WorkTagFwd =
-      typename Kokkos::Impl::if_c<std::is_same<InvalidType, ReducerType>::value,
-                                  WorkTag, void>::type;
-  using ValueInit  = Kokkos::Impl::FunctorValueInit<ReducerTypeFwd, WorkTagFwd>;
-  using ValueFinal = Kokkos::Impl::FunctorFinal<ReducerTypeFwd, WorkTagFwd>;
-  using ValueJoin  = Kokkos::Impl::FunctorValueJoin<ReducerTypeFwd, WorkTagFwd>;
-  using ValueOps   = Kokkos::Impl::FunctorValueOps<ReducerTypeFwd, WorkTagFwd>;
+  using Analysis       = FunctorAnalysis<FunctorPatternInterface::REDUCE,
+                                   MDRangePolicy, ReducerTypeFwd>;
+
   using pointer_type   = typename Analysis::pointer_type;
   using value_type     = typename Analysis::value_type;
   using reference_type = typename Analysis::reference_type;
@@ -1560,10 +1465,8 @@ class ParallelReduce<FunctorType, Kokkos::MDRangePolicy<Traits...>, ReducerType,
 
   inline void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_mdr_policy.space());
-#endif
 
     const int num_worker_threads = Kokkos::Experimental::HPX::concurrency();
     const std::size_t value_size =
@@ -1572,100 +1475,50 @@ class ParallelReduce<FunctorType, Kokkos::MDRangePolicy<Traits...>, ReducerType,
     thread_buffer &buffer = m_mdr_policy.space().impl_get_buffer();
     buffer.resize(num_worker_threads, value_size);
 
+    using hpx::for_loop;
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
+
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
+
+    typename Analysis::Reducer final_reducer(
+        &ReducerConditional::select(m_functor, m_reducer));
+
 #if KOKKOS_HPX_IMPLEMENTATION == 0
-    using hpx::parallel::for_loop;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
 
-    for_loop(par, 0, num_worker_threads, [this, &buffer](std::size_t t) {
-      ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                      reinterpret_cast<pointer_type>(buffer.get(t)));
-    });
+    for_loop(
+        par.on(exec).with(static_chunk_size(1)), 0, num_worker_threads,
+        [&buffer, final_reducer](std::size_t t) {
+          final_reducer.init(reinterpret_cast<pointer_type>(buffer.get(t)));
+        });
 
-    for_loop(par.with(static_chunk_size(m_policy.chunk_size())),
+    for_loop(par.on(exec).with(
+                 static_chunk_size(get_hpx_adjusted_chunk_size(m_policy))),
              m_policy.begin(), m_policy.end(), [this, &buffer](const Member i) {
-               reference_type update = ValueOps::reference(
+               reference_type update = Analysis::Reducer::reference(
                    reinterpret_cast<pointer_type>(buffer.get(
                        Kokkos::Experimental::HPX::impl_hardware_thread_id())));
                iterate_type(m_mdr_policy, m_functor, update)(i);
              });
 
 #elif KOKKOS_HPX_IMPLEMENTATION == 1
-    using hpx::apply;
-    using hpx::lcos::local::latch;
+    using hpx::for_loop_strided;
 
-    {
-      latch num_tasks_remaining(num_worker_threads);
-      ChunkedRoundRobinExecutor exec(num_worker_threads);
-
-      for (int t = 0; t < num_worker_threads; ++t) {
-        apply(exec, [this, &buffer, &num_tasks_remaining, t]() {
-          ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                          reinterpret_cast<pointer_type>(buffer.get(t)));
-
-          num_tasks_remaining.count_down(1);
+    for_loop(
+        par.on(exec).with(static_chunk_size(1)), std::size_t(0),
+        num_worker_threads, [&buffer, final_reducer](const std::size_t t) {
+          final_reducer.init(reinterpret_cast<pointer_type>(buffer.get(t)));
         });
-      }
 
-      num_tasks_remaining.wait();
-    }
-
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    latch num_tasks_remaining(num_tasks);
-    ChunkedRoundRobinExecutor exec(num_tasks);
-
-    for (Member i_begin = m_policy.begin(); i_begin < m_policy.end();
-         i_begin += m_policy.chunk_size()) {
-      apply(exec, [this, &num_tasks_remaining, &buffer, i_begin]() {
-        reference_type update =
-            ValueOps::reference(reinterpret_cast<pointer_type>(buffer.get(
-                Kokkos::Experimental::HPX::impl_hardware_thread_id())));
-        const Member i_end =
-            (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
-
-        for (Member i = i_begin; i < i_end; ++i) {
-          iterate_type(m_mdr_policy, m_functor, update)(i);
-        }
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
-
-#elif KOKKOS_HPX_IMPLEMENTATION == 2
-    using hpx::parallel::for_loop;
-    using hpx::parallel::for_loop_strided;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
-
-    {
-      ChunkedRoundRobinExecutor exec(num_worker_threads);
-
-      for_loop(par.on(exec).with(static_chunk_size(1)), std::size_t(0),
-               num_worker_threads, [this, &buffer](const std::size_t t) {
-                 ValueInit::init(
-                     ReducerConditional::select(m_functor, m_reducer),
-                     reinterpret_cast<pointer_type>(buffer.get(t)));
-               });
-    }
-
-    const int num_tasks =
-        (m_policy.end() - m_policy.begin() + m_policy.chunk_size() - 1) /
-        m_policy.chunk_size();
-    ChunkedRoundRobinExecutor exec(num_tasks);
+    const Member chunk_size = get_hpx_adjusted_chunk_size(m_policy);
 
     for_loop_strided(
-        par.on(exec).with(static_chunk_size(1)), m_policy.begin(),
-        m_policy.end(), m_policy.chunk_size(),
-        [this, &buffer](const Member i_begin) {
-          reference_type update =
-              ValueOps::reference(reinterpret_cast<pointer_type>(buffer.get(
+        par.on(exec), m_policy.begin(), m_policy.end(), chunk_size,
+        [this, &buffer, chunk_size](const Member i_begin) {
+          reference_type update = Analysis::Reducer::reference(
+              reinterpret_cast<pointer_type>(buffer.get(
                   Kokkos::Experimental::HPX::impl_hardware_thread_id())));
-          const Member i_end =
-              (std::min)(i_begin + m_policy.chunk_size(), m_policy.end());
+          const Member i_end = (std::min)(i_begin + chunk_size, m_policy.end());
 
           for (Member i = i_begin; i < i_end; ++i) {
             iterate_type(m_mdr_policy, m_functor, update)(i);
@@ -1674,14 +1527,11 @@ class ParallelReduce<FunctorType, Kokkos::MDRangePolicy<Traits...>, ReducerType,
 #endif
 
     for (int i = 1; i < num_worker_threads; ++i) {
-      ValueJoin::join(ReducerConditional::select(m_functor, m_reducer),
-                      reinterpret_cast<pointer_type>(buffer.get(0)),
-                      reinterpret_cast<pointer_type>(buffer.get(i)));
+      final_reducer.join(reinterpret_cast<pointer_type>(buffer.get(0)),
+                         reinterpret_cast<pointer_type>(buffer.get(i)));
     }
 
-    Kokkos::Impl::FunctorFinal<ReducerTypeFwd, WorkTagFwd>::final(
-        ReducerConditional::select(m_functor, m_reducer),
-        reinterpret_cast<pointer_type>(buffer.get(0)));
+    final_reducer.final(reinterpret_cast<pointer_type>(buffer.get(0)));
 
     if (m_result_ptr != nullptr) {
       const int n = Analysis::value_count(
@@ -1698,11 +1548,11 @@ class ParallelReduce<FunctorType, Kokkos::MDRangePolicy<Traits...>, ReducerType,
       const FunctorType &arg_functor, MDRangePolicy arg_policy,
       const ViewType &arg_view,
       typename std::enable_if<Kokkos::is_view<ViewType>::value &&
-                                  !Kokkos::is_reducer_type<ReducerType>::value,
+                                  !Kokkos::is_reducer<ReducerType>::value,
                               void *>::type = nullptr)
       : m_functor(arg_functor),
         m_mdr_policy(arg_policy),
-        m_policy(Policy(0, m_mdr_policy.m_num_tiles).set_chunk_size(1)),
+        m_policy(Policy(0, arg_policy.m_num_tiles).set_chunk_size(1)),
         m_reducer(InvalidType()),
         m_result_ptr(arg_view.data()),
         m_force_synchronous(!arg_view.impl_track().has_record()) {}
@@ -1715,6 +1565,15 @@ class ParallelReduce<FunctorType, Kokkos::MDRangePolicy<Traits...>, ReducerType,
         m_reducer(reducer),
         m_result_ptr(reducer.view().data()),
         m_force_synchronous(!reducer.view().impl_track().has_record()) {}
+  template <typename Policy, typename Functor>
+  static int max_tile_size_product(const Policy &, const Functor &) {
+    /**
+     * 1024 here is just our guess for a reasonable max tile size,
+     * it isn't a hardware constraint. If people see a use for larger
+     * tile size products, we're happy to change this.
+     */
+    return 1024;
+  }
 };
 }  // namespace Impl
 }  // namespace Kokkos
@@ -1732,9 +1591,6 @@ class ParallelScan<FunctorType, Kokkos::RangePolicy<Traits...>,
   using Member    = typename Policy::member_type;
   using Analysis =
       FunctorAnalysis<FunctorPatternInterface::SCAN, Policy, FunctorType>;
-  using ValueInit      = Kokkos::Impl::FunctorValueInit<FunctorType, WorkTag>;
-  using ValueJoin      = Kokkos::Impl::FunctorValueJoin<FunctorType, WorkTag>;
-  using ValueOps       = Kokkos::Impl::FunctorValueOps<FunctorType, WorkTag>;
   using pointer_type   = typename Analysis::pointer_type;
   using reference_type = typename Analysis::reference_type;
   using value_type     = typename Analysis::value_type;
@@ -1770,10 +1626,8 @@ class ParallelScan<FunctorType, Kokkos::RangePolicy<Traits...>,
 
   inline void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_policy.space());
-#endif
 
     const int num_worker_threads = Kokkos::Experimental::HPX::concurrency();
     const int value_count        = Analysis::value_count(m_functor);
@@ -1782,59 +1636,57 @@ class ParallelScan<FunctorType, Kokkos::RangePolicy<Traits...>,
     thread_buffer &buffer = m_policy.space().impl_get_buffer();
     buffer.resize(num_worker_threads, 2 * value_size);
 
-    using hpx::apply;
-    using hpx::lcos::local::barrier;
-    using hpx::lcos::local::latch;
+    using hpx::barrier;
+    using hpx::for_loop;
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
 
-    barrier bar(num_worker_threads);
-    latch num_tasks_remaining(num_worker_threads);
-    ChunkedRoundRobinExecutor exec(num_worker_threads);
+    barrier<> bar(num_worker_threads);
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
 
-    for (int t = 0; t < num_worker_threads; ++t) {
-      apply(exec, [this, &bar, &buffer, &num_tasks_remaining,
-                   num_worker_threads, value_count, value_size, t]() {
-        reference_type update_sum = ValueInit::init(
-            m_functor, reinterpret_cast<pointer_type>(buffer.get(t)));
+    typename Analysis::Reducer final_reducer(&m_functor);
 
-        const WorkRange range(m_policy, t, num_worker_threads);
-        execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
-                                       update_sum, false);
+    for_loop(
+        par.on(exec).with(static_chunk_size(1)), 0, num_worker_threads,
+        [this, &bar, &buffer, num_worker_threads, value_count, value_size,
+         final_reducer](int t) {
+          reference_type update_sum =
+              final_reducer.init(reinterpret_cast<pointer_type>(buffer.get(t)));
 
-        bar.wait();
+          const WorkRange range(m_policy, t, num_worker_threads);
+          execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
+                                         update_sum, false);
 
-        if (t == 0) {
-          ValueInit::init(m_functor, reinterpret_cast<pointer_type>(
-                                         buffer.get(0) + value_size));
+          bar.arrive_and_wait();
 
-          for (int i = 1; i < num_worker_threads; ++i) {
-            pointer_type ptr_1_prev =
-                reinterpret_cast<pointer_type>(buffer.get(i - 1));
-            pointer_type ptr_2_prev =
-                reinterpret_cast<pointer_type>(buffer.get(i - 1) + value_size);
-            pointer_type ptr_2 =
-                reinterpret_cast<pointer_type>(buffer.get(i) + value_size);
+          if (t == 0) {
+            final_reducer.init(
+                reinterpret_cast<pointer_type>(buffer.get(0) + value_size));
 
-            for (int j = 0; j < value_count; ++j) {
-              ptr_2[j] = ptr_2_prev[j];
+            for (int i = 1; i < num_worker_threads; ++i) {
+              pointer_type ptr_1_prev =
+                  reinterpret_cast<pointer_type>(buffer.get(i - 1));
+              pointer_type ptr_2_prev = reinterpret_cast<pointer_type>(
+                  buffer.get(i - 1) + value_size);
+              pointer_type ptr_2 =
+                  reinterpret_cast<pointer_type>(buffer.get(i) + value_size);
+
+              for (int j = 0; j < value_count; ++j) {
+                ptr_2[j] = ptr_2_prev[j];
+              }
+
+              final_reducer.join(ptr_2, ptr_1_prev);
             }
-
-            ValueJoin::join(m_functor, ptr_2, ptr_1_prev);
           }
-        }
 
-        bar.wait();
+          bar.arrive_and_wait();
 
-        reference_type update_base = ValueOps::reference(
-            reinterpret_cast<pointer_type>(buffer.get(t) + value_size));
+          reference_type update_base = Analysis::Reducer::reference(
+              reinterpret_cast<pointer_type>(buffer.get(t) + value_size));
 
-        execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
-                                       update_base, true);
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
+          execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
+                                         update_base, true);
+        });
   }
 
   inline ParallelScan(const FunctorType &arg_functor, const Policy &arg_policy)
@@ -1851,9 +1703,6 @@ class ParallelScanWithTotal<FunctorType, Kokkos::RangePolicy<Traits...>,
   using Member    = typename Policy::member_type;
   using Analysis =
       FunctorAnalysis<FunctorPatternInterface::SCAN, Policy, FunctorType>;
-  using ValueInit      = Kokkos::Impl::FunctorValueInit<FunctorType, WorkTag>;
-  using ValueJoin      = Kokkos::Impl::FunctorValueJoin<FunctorType, WorkTag>;
-  using ValueOps       = Kokkos::Impl::FunctorValueOps<FunctorType, WorkTag>;
   using pointer_type   = typename Analysis::pointer_type;
   using reference_type = typename Analysis::reference_type;
   using value_type     = typename Analysis::value_type;
@@ -1890,10 +1739,8 @@ class ParallelScanWithTotal<FunctorType, Kokkos::RangePolicy<Traits...>,
 
   inline void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_policy.space());
-#endif
 
     const int num_worker_threads = Kokkos::Experimental::HPX::concurrency();
     const int value_count        = Analysis::value_count(m_functor);
@@ -1902,63 +1749,61 @@ class ParallelScanWithTotal<FunctorType, Kokkos::RangePolicy<Traits...>,
     thread_buffer &buffer = m_policy.space().impl_get_buffer();
     buffer.resize(num_worker_threads, 2 * value_size);
 
-    using hpx::apply;
-    using hpx::lcos::local::barrier;
-    using hpx::lcos::local::latch;
+    using hpx::barrier;
+    using hpx::for_loop;
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
 
-    barrier bar(num_worker_threads);
-    latch num_tasks_remaining(num_worker_threads);
-    ChunkedRoundRobinExecutor exec(num_worker_threads);
+    barrier<> bar(num_worker_threads);
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
 
-    for (int t = 0; t < num_worker_threads; ++t) {
-      apply(exec, [this, &bar, &buffer, &num_tasks_remaining,
-                   num_worker_threads, value_count, value_size, t]() {
-        reference_type update_sum = ValueInit::init(
-            m_functor, reinterpret_cast<pointer_type>(buffer.get(t)));
+    typename Analysis::Reducer final_reducer(&m_functor);
 
-        const WorkRange range(m_policy, t, num_worker_threads);
-        execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
-                                       update_sum, false);
+    for_loop(
+        par.on(exec).with(static_chunk_size(1)), 0, num_worker_threads,
+        [this, &bar, &buffer, num_worker_threads, value_count, value_size,
+         final_reducer](int t) {
+          reference_type update_sum =
+              final_reducer.init(reinterpret_cast<pointer_type>(buffer.get(t)));
 
-        bar.wait();
+          const WorkRange range(m_policy, t, num_worker_threads);
+          execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
+                                         update_sum, false);
 
-        if (t == 0) {
-          ValueInit::init(m_functor, reinterpret_cast<pointer_type>(
-                                         buffer.get(0) + value_size));
+          bar.arrive_and_wait();
 
-          for (int i = 1; i < num_worker_threads; ++i) {
-            pointer_type ptr_1_prev =
-                reinterpret_cast<pointer_type>(buffer.get(i - 1));
-            pointer_type ptr_2_prev =
-                reinterpret_cast<pointer_type>(buffer.get(i - 1) + value_size);
-            pointer_type ptr_2 =
-                reinterpret_cast<pointer_type>(buffer.get(i) + value_size);
+          if (t == 0) {
+            final_reducer.init(
+                reinterpret_cast<pointer_type>(buffer.get(0) + value_size));
 
-            for (int j = 0; j < value_count; ++j) {
-              ptr_2[j] = ptr_2_prev[j];
+            for (int i = 1; i < num_worker_threads; ++i) {
+              pointer_type ptr_1_prev =
+                  reinterpret_cast<pointer_type>(buffer.get(i - 1));
+              pointer_type ptr_2_prev = reinterpret_cast<pointer_type>(
+                  buffer.get(i - 1) + value_size);
+              pointer_type ptr_2 =
+                  reinterpret_cast<pointer_type>(buffer.get(i) + value_size);
+
+              for (int j = 0; j < value_count; ++j) {
+                ptr_2[j] = ptr_2_prev[j];
+              }
+
+              final_reducer.join(ptr_2, ptr_1_prev);
             }
-
-            ValueJoin::join(m_functor, ptr_2, ptr_1_prev);
           }
-        }
 
-        bar.wait();
+          bar.arrive_and_wait();
 
-        reference_type update_base = ValueOps::reference(
-            reinterpret_cast<pointer_type>(buffer.get(t) + value_size));
+          reference_type update_base = Analysis::Reducer::reference(
+              reinterpret_cast<pointer_type>(buffer.get(t) + value_size));
 
-        execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
-                                       update_base, true);
+          execute_functor_range<WorkTag>(m_functor, range.begin(), range.end(),
+                                         update_base, true);
 
-        if (t == num_worker_threads - 1) {
-          m_returnvalue = update_base;
-        }
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
+          if (t == num_worker_threads - 1) {
+            m_returnvalue = update_base;
+          }
+        });
   }
 
   inline ParallelScanWithTotal(const FunctorType &arg_functor,
@@ -2039,23 +1884,24 @@ class ParallelFor<FunctorType, Kokkos::TeamPolicy<Properties...>,
 
   inline void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_policy.space());
-#endif
 
     const int num_worker_threads = Kokkos::Experimental::HPX::concurrency();
 
     thread_buffer &buffer = m_policy.space().impl_get_buffer();
     buffer.resize(num_worker_threads, m_shared);
 
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
+
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
+
 #if KOKKOS_HPX_IMPLEMENTATION == 0
-    using hpx::parallel::for_loop;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
+    using hpx::for_loop;
 
     for_loop(
-        par.with(static_chunk_size(m_policy.chunk_size())), 0,
+        par.on(exec).with(static_chunk_size(m_policy.chunk_size())), 0,
         m_policy.league_size(), [this, &buffer](const int league_rank) {
           execute_functor<WorkTag>(
               m_functor, m_policy, league_rank,
@@ -2064,42 +1910,11 @@ class ParallelFor<FunctorType, Kokkos::TeamPolicy<Properties...>,
         });
 
 #elif KOKKOS_HPX_IMPLEMENTATION == 1
-    using hpx::apply;
-    using hpx::lcos::local::latch;
-
-    const int num_tasks = (m_policy.league_size() + m_policy.chunk_size() - 1) /
-                          m_policy.chunk_size();
-    latch num_tasks_remaining(num_tasks);
-    ChunkedRoundRobinExecutor exec(num_tasks);
-
-    for (int league_rank_begin = 0; league_rank_begin < m_policy.league_size();
-         league_rank_begin += m_policy.chunk_size()) {
-      apply(exec, [this, &buffer, &num_tasks_remaining, league_rank_begin]() {
-        const int league_rank_end = (std::min)(
-            league_rank_begin + m_policy.chunk_size(), m_policy.league_size());
-        execute_functor_range<WorkTag>(
-            m_functor, m_policy, league_rank_begin, league_rank_end,
-            buffer.get(Kokkos::Experimental::HPX::impl_hardware_thread_id()),
-            m_shared);
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
-
-#elif KOKKOS_HPX_IMPLEMENTATION == 2
-    using hpx::parallel::for_loop_strided;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
-
-    const int num_tasks = (m_policy.league_size() + m_policy.chunk_size() - 1) /
-                          m_policy.chunk_size();
-    ChunkedRoundRobinExecutor exec(num_tasks);
+    using hpx::for_loop_strided;
 
     for_loop_strided(
-        par.on(exec).with(static_chunk_size(1)), 0, m_policy.league_size(),
-        m_policy.chunk_size(), [this, &buffer](const int league_rank_begin) {
+        par.on(exec), 0, m_policy.league_size(), m_policy.chunk_size(),
+        [this, &buffer](const int league_rank_begin) {
           const int league_rank_end =
               (std::min)(league_rank_begin + m_policy.chunk_size(),
                          m_policy.league_size());
@@ -2124,22 +1939,15 @@ template <class FunctorType, class ReducerType, class... Properties>
 class ParallelReduce<FunctorType, Kokkos::TeamPolicy<Properties...>,
                      ReducerType, Kokkos::Experimental::HPX> {
  private:
-  using Policy = TeamPolicyInternal<Kokkos::Experimental::HPX, Properties...>;
-  using Analysis =
-      FunctorAnalysis<FunctorPatternInterface::REDUCE, Policy, FunctorType>;
+  using Policy  = TeamPolicyInternal<Kokkos::Experimental::HPX, Properties...>;
   using Member  = typename Policy::member_type;
   using WorkTag = typename Policy::work_tag;
   using ReducerConditional =
       Kokkos::Impl::if_c<std::is_same<InvalidType, ReducerType>::value,
                          FunctorType, ReducerType>;
   using ReducerTypeFwd = typename ReducerConditional::type;
-  using WorkTagFwd =
-      typename Kokkos::Impl::if_c<std::is_same<InvalidType, ReducerType>::value,
-                                  WorkTag, void>::type;
-  using ValueInit  = Kokkos::Impl::FunctorValueInit<ReducerTypeFwd, WorkTagFwd>;
-  using ValueFinal = Kokkos::Impl::FunctorFinal<ReducerTypeFwd, WorkTagFwd>;
-  using ValueJoin  = Kokkos::Impl::FunctorValueJoin<ReducerTypeFwd, WorkTagFwd>;
-  using ValueOps   = Kokkos::Impl::FunctorValueOps<ReducerTypeFwd, WorkTagFwd>;
+  using Analysis =
+      FunctorAnalysis<FunctorPatternInterface::REDUCE, Policy, ReducerTypeFwd>;
   using pointer_type   = typename Analysis::pointer_type;
   using reference_type = typename Analysis::reference_type;
   using value_type     = typename Analysis::value_type;
@@ -2212,10 +2020,10 @@ class ParallelReduce<FunctorType, Kokkos::TeamPolicy<Properties...>,
   void execute() const {
     if (m_policy.league_size() * m_policy.team_size() == 0) {
       if (m_result_ptr) {
-        ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                        m_result_ptr);
-        ValueFinal::final(ReducerConditional::select(m_functor, m_reducer),
-                          m_result_ptr);
+        typename Analysis::Reducer final_reducer(
+            &ReducerConditional::select(m_functor, m_reducer));
+        final_reducer.init(m_result_ptr);
+        final_reducer.final(m_result_ptr);
       }
       return;
     }
@@ -2224,10 +2032,8 @@ class ParallelReduce<FunctorType, Kokkos::TeamPolicy<Properties...>,
 
   inline void execute_task() const {
     // See [note 1] for an explanation.
-#if defined(KOKKOS_ENABLE_HPX_ASYNC_DISPATCH)
     Kokkos::Experimental::HPX::reset_on_exit_parallel reset_on_exit(
         m_policy.space());
-#endif
 
     const int num_worker_threads = Kokkos::Experimental::HPX::concurrency();
     const std::size_t value_size =
@@ -2236,101 +2042,50 @@ class ParallelReduce<FunctorType, Kokkos::TeamPolicy<Properties...>,
     thread_buffer &buffer = m_policy.space().impl_get_buffer();
     buffer.resize(num_worker_threads, value_size + m_shared);
 
+    auto exec = Kokkos::Experimental::HPX::impl_get_executor();
+
+    using hpx::for_loop;
+    using hpx::execution::par;
+    using hpx::execution::static_chunk_size;
+
+    typename Analysis::Reducer final_reducer(
+        &ReducerConditional::select(m_functor, m_reducer));
+
 #if KOKKOS_HPX_IMPLEMENTATION == 0
-    using hpx::parallel::for_loop;
-    using hpx::parallel::execution::par;
 
-    for_loop(par, 0, num_worker_threads, [this, &buffer](const std::size_t t) {
-      ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                      reinterpret_cast<pointer_type>(buffer.get(t)));
-    });
-
-    using hpx::parallel::execution::static_chunk_size;
-
-    hpx::parallel::for_loop(
-        par.with(static_chunk_size(m_policy.chunk_size())), 0,
-        m_policy.league_size(),
-        [this, &buffer, value_size](const int league_rank) {
-          std::size_t t = Kokkos::Experimental::HPX::impl_hardware_thread_id();
-          reference_type update = ValueOps::reference(
-              reinterpret_cast<pointer_type>(buffer.get(t)));
-
-          execute_functor<WorkTag>(m_functor, m_policy, league_rank,
-                                   buffer.get(t) + value_size, m_shared,
-                                   update);
+    for_loop(
+        par.on(exec).with(static_chunk_size(1)), 0, num_worker_threads,
+        [&buffer, final_reducer](const std::size_t t) {
+          final_reducer.init(reinterpret_cast<pointer_type>(buffer.get(t)));
         });
+
+    for_loop(par.on(exec).with(static_chunk_size(m_policy.chunk_size())), 0,
+             m_policy.league_size(),
+             [this, &buffer, value_size](const int league_rank) {
+               std::size_t t =
+                   Kokkos::Experimental::HPX::impl_hardware_thread_id();
+               reference_type update = Analysis::Reducer::reference(
+                   reinterpret_cast<pointer_type>(buffer.get(t)));
+
+               execute_functor<WorkTag>(m_functor, m_policy, league_rank,
+                                        buffer.get(t) + value_size, m_shared,
+                                        update);
+             });
 
 #elif KOKKOS_HPX_IMPLEMENTATION == 1
-    using hpx::apply;
-    using hpx::lcos::local::latch;
+    using hpx::for_loop_strided;
 
-    {
-      latch num_tasks_remaining(num_worker_threads);
-      ChunkedRoundRobinExecutor exec(num_worker_threads);
-
-      for (int t = 0; t < num_worker_threads; ++t) {
-        apply(exec, [this, &buffer, &num_tasks_remaining, t]() {
-          ValueInit::init(ReducerConditional::select(m_functor, m_reducer),
-                          reinterpret_cast<pointer_type>(buffer.get(t)));
-
-          num_tasks_remaining.count_down(1);
+    for_loop(
+        par.on(exec).with(static_chunk_size(1)), 0, num_worker_threads,
+        [&buffer, final_reducer](std::size_t const t) {
+          final_reducer.init(reinterpret_cast<pointer_type>(buffer.get(t)));
         });
-      }
-
-      num_tasks_remaining.wait();
-    }
-
-    const int num_tasks = (m_policy.league_size() + m_policy.chunk_size() - 1) /
-                          m_policy.chunk_size();
-    latch num_tasks_remaining(num_tasks);
-    ChunkedRoundRobinExecutor exec(num_tasks);
-
-    for (int league_rank_begin = 0; league_rank_begin < m_policy.league_size();
-         league_rank_begin += m_policy.chunk_size()) {
-      apply(exec, [this, &buffer, &num_tasks_remaining, league_rank_begin,
-                   value_size]() {
-        std::size_t t = Kokkos::Experimental::HPX::impl_hardware_thread_id();
-        reference_type update =
-            ValueOps::reference(reinterpret_cast<pointer_type>(buffer.get(t)));
-        const int league_rank_end = (std::min)(
-            league_rank_begin + m_policy.chunk_size(), m_policy.league_size());
-        execute_functor_range<WorkTag>(
-            m_functor, m_policy, league_rank_begin, league_rank_end,
-            buffer.get(t) + value_size, m_shared, update);
-
-        num_tasks_remaining.count_down(1);
-      });
-    }
-
-    num_tasks_remaining.wait();
-
-#elif KOKKOS_HPX_IMPLEMENTATION == 2
-    using hpx::parallel::for_loop;
-    using hpx::parallel::for_loop_strided;
-    using hpx::parallel::execution::par;
-    using hpx::parallel::execution::static_chunk_size;
-
-    {
-      ChunkedRoundRobinExecutor exec(num_worker_threads);
-
-      for_loop(par.on(exec).with(static_chunk_size(1)), 0, num_worker_threads,
-               [this, &buffer](std::size_t const t) {
-                 ValueInit::init(
-                     ReducerConditional::select(m_functor, m_reducer),
-                     reinterpret_cast<pointer_type>(buffer.get(t)));
-               });
-    }
-
-    const int num_tasks = (m_policy.league_size() + m_policy.chunk_size() - 1) /
-                          m_policy.chunk_size();
-    ChunkedRoundRobinExecutor exec(num_tasks);
 
     for_loop_strided(
-        par.on(exec).with(static_chunk_size(1)), 0, m_policy.league_size(),
-        m_policy.chunk_size(),
+        par.on(exec), 0, m_policy.league_size(), m_policy.chunk_size(),
         [this, &buffer, value_size](int const league_rank_begin) {
           std::size_t t = Kokkos::Experimental::HPX::impl_hardware_thread_id();
-          reference_type update = ValueOps::reference(
+          reference_type update = Analysis::Reducer::reference(
               reinterpret_cast<pointer_type>(buffer.get(t)));
           const int league_rank_end =
               (std::min)(league_rank_begin + m_policy.chunk_size(),
@@ -2343,12 +2098,10 @@ class ParallelReduce<FunctorType, Kokkos::TeamPolicy<Properties...>,
 
     const pointer_type ptr = reinterpret_cast<pointer_type>(buffer.get(0));
     for (int t = 1; t < num_worker_threads; ++t) {
-      ValueJoin::join(ReducerConditional::select(m_functor, m_reducer), ptr,
-                      reinterpret_cast<pointer_type>(buffer.get(t)));
+      final_reducer.join(ptr, reinterpret_cast<pointer_type>(buffer.get(t)));
     }
 
-    Kokkos::Impl::FunctorFinal<ReducerTypeFwd, WorkTagFwd>::final(
-        ReducerConditional::select(m_functor, m_reducer), ptr);
+    final_reducer.final(ptr);
 
     if (m_result_ptr) {
       const int n = Analysis::value_count(
@@ -2365,7 +2118,7 @@ class ParallelReduce<FunctorType, Kokkos::TeamPolicy<Properties...>,
       const FunctorType &arg_functor, const Policy &arg_policy,
       const ViewType &arg_result,
       typename std::enable_if<Kokkos::is_view<ViewType>::value &&
-                                  !Kokkos::is_reducer_type<ReducerType>::value,
+                                  !Kokkos::is_reducer<ReducerType>::value,
                               void *>::type = nullptr)
       : m_functor(arg_functor),
         m_league(arg_policy.league_size()),
@@ -2438,13 +2191,14 @@ KOKKOS_INLINE_FUNCTION
       thread, count);
 }
 
-template <typename iType>
-KOKKOS_INLINE_FUNCTION
-    Impl::ThreadVectorRangeBoundariesStruct<iType, Impl::HPXTeamMember>
-    ThreadVectorRange(const Impl::HPXTeamMember &thread, const iType &i_begin,
-                      const iType &i_end) {
+template <typename iType1, typename iType2>
+KOKKOS_INLINE_FUNCTION Impl::ThreadVectorRangeBoundariesStruct<
+    typename std::common_type<iType1, iType2>::type, Impl::HPXTeamMember>
+ThreadVectorRange(const Impl::HPXTeamMember &thread, const iType1 &i_begin,
+                  const iType2 &i_end) {
+  using iType = typename std::common_type<iType1, iType2>::type;
   return Impl::ThreadVectorRangeBoundariesStruct<iType, Impl::HPXTeamMember>(
-      thread, i_begin, i_end);
+      thread, iType(i_begin), iType(i_end));
 }
 
 KOKKOS_INLINE_FUNCTION
@@ -2601,10 +2355,33 @@ KOKKOS_INLINE_FUNCTION void parallel_scan(
     const Impl::ThreadVectorRangeBoundariesStruct<iType, Impl::HPXTeamMember>
         &loop_boundaries,
     const FunctorType &lambda) {
-  using ValueTraits = Kokkos::Impl::FunctorValueTraits<FunctorType, void>;
-  using value_type  = typename ValueTraits::value_type;
+  using value_type =
+      typename Impl::FunctorAnalysis<Impl::FunctorPatternInterface::SCAN,
+                                     TeamPolicy<Experimental::HPX>,
+                                     FunctorType>::value_type;
 
   value_type scan_val = value_type();
+
+#ifdef KOKKOS_ENABLE_PRAGMA_IVDEP
+#pragma ivdep
+#endif
+  for (iType i = loop_boundaries.start; i < loop_boundaries.end;
+       i += loop_boundaries.increment) {
+    lambda(i, scan_val, true);
+  }
+}
+
+/** \brief  Intra-thread vector parallel scan with reducer
+ *
+ */
+template <typename iType, class FunctorType, typename ReducerType>
+KOKKOS_INLINE_FUNCTION
+    typename std::enable_if<Kokkos::is_reducer<ReducerType>::value>::type
+    parallel_scan(const Impl::ThreadVectorRangeBoundariesStruct<
+                      iType, Impl::HPXTeamMember> &loop_boundaries,
+                  const FunctorType &lambda, const ReducerType &reducer) {
+  typename ReducerType::value_type scan_val;
+  reducer.init(scan_val);
 
 #ifdef KOKKOS_ENABLE_PRAGMA_IVDEP
 #pragma ivdep

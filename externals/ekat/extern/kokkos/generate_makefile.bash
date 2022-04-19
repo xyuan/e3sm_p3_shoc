@@ -61,30 +61,22 @@ get_kokkos_cuda_option_list() {
   echo parsing KOKKOS_CUDA_OPTIONS=$KOKKOS_CUDA_OPTIONS
   KOKKOS_CUDA_OPTION_CMD=
   PARSE_CUDA_LST=$(echo $KOKKOS_CUDA_OPTIONS | tr "," "\n")
-  local opt_val=""
   for CUDA_ in $PARSE_CUDA_LST
   do
      CUDA_OPT_NAME=
      if [ "${CUDA_}" == "enable_lambda" ]; then
         CUDA_OPT_NAME=CUDA_LAMBDA
-        opt_val="ON"
-     elif [ "${CUDA_}" == "disable_cuda_arch_linking" ]; then
-        CUDA_OPT_NAME=CUDA_ARCH_LINKING
-        opt_val="OFF"
      elif  [ "${CUDA_}" == "rdc" ]; then
         CUDA_OPT_NAME=CUDA_RELOCATABLE_DEVICE_CODE
-        opt_val="ON"
      elif  [ "${CUDA_}" == "force_uvm" ]; then
         CUDA_OPT_NAME=CUDA_UVM
-        opt_val="ON"
      elif  [ "${CUDA_}" == "use_ldg" ]; then
         CUDA_OPT_NAME=CUDA_LDG_INTRINSIC
-        opt_val="ON"
      else
         echo "${CUDA_} is not a valid cuda options..."
      fi
      if [ "${CUDA_OPT_NAME}" != "" ]; then
-        KOKKOS_CUDA_OPTION_CMD="-DKokkos_ENABLE_${CUDA_OPT_NAME}=${opt_val} ${KOKKOS_CUDA_OPTION_CMD}"
+        KOKKOS_CUDA_OPTION_CMD="-DKokkos_ENABLE_${CUDA_OPT_NAME}=ON ${KOKKOS_CUDA_OPTION_CMD}"
      fi
   done
 }
@@ -154,8 +146,9 @@ display_help_text() {
       echo "--with-cuda[=/Path/To/Cuda]:          Enable Cuda and set path to Cuda Toolkit."
       echo "--with-hip[=/Path/To/Hip]:            Enable Hip and set path to ROCM Toolkit."
       echo "--with-openmptarget:                  Enable OpenMPTarget backend."
+      echo "--with-sycl:                          Enable Sycl backend."
       echo "--with-openmp:                        Enable OpenMP backend."
-      echo "--with-pthread:                       Enable Pthreads backend."
+      echo "--with-threads:                       Enable Threads backend."
       echo "--with-serial:                        Enable Serial backend."
       echo "--with-devices:                       Explicitly add a set of backends."
       echo ""
@@ -164,10 +157,12 @@ display_help_text() {
       echo "                 AMDAVX          = AMD CPU"
       echo "                 ZEN             = AMD Zen-Core CPU"
       echo "                 ZEN2            = AMD Zen2-Core CPU"
+      echo "                 ZEN3            = AMD Zen3-Core CPU"
       echo "               [AMD: GPU]"
       echo "                 VEGA900         = AMD GPU MI25 GFX900"
       echo "                 VEGA906         = AMD GPU MI50/MI60 GFX906"
-      echo "                 VEGA908         = AMD GPU"
+      echo "                 VEGA908         = AMD GPU MI100 GFX908"
+      echo "                 VEGA90A         = AMD GPU MI200 GFX90A"
       echo "               [ARM]"
       echo "                 ARMV80          = ARMv8.0 Compatible CPU"
       echo "                 ARMV81          = ARMv8.1 Compatible CPU"
@@ -187,6 +182,14 @@ display_help_text() {
       echo "               [Intel Xeon Phi]"
       echo "                 KNC             = Intel Knights Corner Xeon Phi"
       echo "                 KNL             = Intel Knights Landing Xeon Phi"
+      echo "               [Intel: GPU]"
+      echo "                 INTEL_GEN       = SPIR64-based devices, e.g. Intel GPUs, using JIT"
+      echo "                 INTEL_DG1       = Intel Iris XeMAX GPU"
+      echo "                 INTEL_GEN9      = Intel GPU Gen9"
+      echo "                 INTEL_GEN11     = Intel GPU Gen11"
+      echo "                 INTEL_GEN12LP   = Intel GPU Gen12LP"
+      echo "                 INTEL_XEHP      = Intel GPU Xe-HP"
+      echo "                 INTEL_PVC       = Intel GPU Ponte Vecchio"
       echo "               [NVIDIA]"
       echo "                 Kepler30        = NVIDIA Kepler generation CC 3.0"
       echo "                 Kepler32        = NVIDIA Kepler generation CC 3.2"
@@ -207,7 +210,7 @@ display_help_text() {
       echo "--cxxflags=[FLAGS]            Overwrite CXXFLAGS for library build and test"
       echo "                                build.  This will still set certain required"
       echo "                                flags via KOKKOS_CXXFLAGS (such as -fopenmp,"
-      echo "                                --std=c++14, etc.)."
+      echo "                                -std=c++14, etc.)."
       echo "--cxxstandard=[FLAGS]         Set CMAKE_CXX_STANDARD for library build and test"
       echo "                                c++14 (default), c++17, c++1y, c++1z, c++2a"
       echo "--ldflags=[FLAGS]             Overwrite LDFLAGS for library build and test"
@@ -224,7 +227,7 @@ display_help_text() {
       echo "                                disable_profiling = do not compile with profiling hooks"
       echo "                                "
       echo "--with-cuda-options=[OPT]:    Additional options to CUDA:"
-      echo "                                force_uvm, use_ldg, enable_lambda, rdc, disable_cuda_arch_linking"
+      echo "                                force_uvm, use_ldg, enable_lambda, rdc"
       echo "--with-hip-options=[OPT]:     Additional options to HIP:"
       echo "                                rdc"
       echo "--with-hpx-options=[OPT]:     Additional options to HPX:"
@@ -293,8 +296,15 @@ do
     --with-openmp)
       update_kokkos_devices OpenMP
       ;;
+    --with-sycl)
+      update_kokkos_devices Sycl
+      ;;
+    --with-threads)
+      update_kokkos_devices Threads
+      ;;
     --with-pthread)
       update_kokkos_devices Pthread
+      echo "warning: The --with-pthread option is deprecated. Use --with-threads instead!"
       ;;
     --with-serial)
       update_kokkos_devices Serial
@@ -364,7 +374,7 @@ do
       ;;
     --compiler*)
       COMPILER="${key#*=}"
-      CNUM=$(command -v ${COMPILER} 2>&1 >/dev/null | grep "no ${COMPILER}" | wc -l)
+      CNUM=$(command -v ${COMPILER} 2>&1 >/dev/null | grep -c "no ${COMPILER}")
       if [ ${CNUM} -gt 0 ]; then
         echo "Invalid compiler by --compiler command: '${COMPILER}'"
         exit
@@ -373,7 +383,7 @@ do
         echo "Empty compiler specified by --compiler command."
         exit
       fi
-      CNUM=$(command -v ${COMPILER} | grep ${COMPILER} | wc -l)
+      CNUM=$(command -v ${COMPILER} | grep -c ${COMPILER})
       if [ ${CNUM} -eq 0 ]; then
         echo "Invalid compiler by --compiler command: '${COMPILER}'"
         exit
@@ -481,5 +491,5 @@ if [[ ${COMPILER} == *clang* ]]; then
    fi
 fi
 
-echo cmake $COMPILER_CMD  -DCMAKE_CXX_FLAGS="${KOKKOS_CXXFLAGS}" -DCMAKE_EXE_LINKER_FLAGS="${KOKKOS_LDFLAGS}" -DCMAKE_INSTALL_PREFIX=${PREFIX} ${KOKKOS_DEVICE_CMD} ${KOKKOS_ARCH_CMD} -DKokkos_ENABLE_TESTS=${KOKKOS_DO_TESTS} -DKokkos_ENABLE_EXAMPLES=${KOKKOS_DO_EXAMPLES} ${KOKKOS_OPTION_CMD} ${KOKKOS_CUDA_OPTION_CMD} ${KOKKOS_HIP_OPTION_CMD} -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_CXX_EXTENSIONS=OFF ${STANDARD_CMD} ${KOKKOS_DEBUG_CMD} ${KOKKOS_BC_CMD} ${KOKKOS_HWLOC_CMD} ${KOKKOS_HWLOC_PATH_CMD} ${KOKKOS_MEMKIND_CMD} ${KOKKOS_MEMKIND_PATH_CMD} ${KOKKOS_PATH}
-cmake $COMPILER_CMD  -DCMAKE_CXX_FLAGS="${KOKKOS_CXXFLAGS//\"}" -DCMAKE_EXE_LINKER_FLAGS="${KOKKOS_LDFLAGS//\"}" -DCMAKE_INSTALL_PREFIX=${PREFIX} ${KOKKOS_DEVICE_CMD} ${KOKKOS_ARCH_CMD} -DKokkos_ENABLE_TESTS=${KOKKOS_DO_TESTS} -DKokkos_ENABLE_EXAMPLES=${KOKKOS_DO_EXAMPLES} ${KOKKOS_OPTION_CMD} ${KOKKOS_CUDA_OPTION_CMD} ${KOKKOS_HIP_OPTION_CMD} -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_CXX_EXTENSIONS=OFF ${STANDARD_CMD} ${KOKKOS_DEBUG_CMD} ${KOKKOS_BC_CMD} ${KOKKOS_HWLOC_CMD} ${KOKKOS_HWLOC_PATH_CMD} ${KOKKOS_MEMKIND_CMD} ${KOKKOS_MEMKIND_PATH_CMD} ${PASSTHRU_CMAKE_FLAGS} ${KOKKOS_PATH}
+echo cmake $COMPILER_CMD  -DCMAKE_CXX_FLAGS="${KOKKOS_CXXFLAGS}" -DCMAKE_EXE_LINKER_FLAGS="${KOKKOS_LDFLAGS}" -DCMAKE_INSTALL_PREFIX=${PREFIX} ${KOKKOS_DEVICE_CMD} ${KOKKOS_ARCH_CMD} -DKokkos_ENABLE_TESTS=${KOKKOS_DO_TESTS} -DKokkos_ENABLE_EXAMPLES=${KOKKOS_DO_EXAMPLES} ${KOKKOS_OPTION_CMD} ${KOKKOS_CUDA_OPTION_CMD} ${KOKKOS_HIP_OPTION_CMD} -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_CXX_EXTENSIONS=OFF ${STANDARD_CMD} ${KOKKOS_DEBUG_CMD} ${KOKKOS_BC_CMD} ${KOKKOS_HWLOC_CMD} ${KOKKOS_HWLOC_PATH_CMD} ${KOKKOS_MEMKIND_CMD} ${KOKKOS_MEMKIND_PATH_CMD} -DKokkos_ENABLE_DEPRECATION_WARNINGS=OFF ${KOKKOS_PATH}
+cmake $COMPILER_CMD  -DCMAKE_CXX_FLAGS="${KOKKOS_CXXFLAGS//\"}" -DCMAKE_EXE_LINKER_FLAGS="${KOKKOS_LDFLAGS//\"}" -DCMAKE_INSTALL_PREFIX=${PREFIX} ${KOKKOS_DEVICE_CMD} ${KOKKOS_ARCH_CMD} -DKokkos_ENABLE_TESTS=${KOKKOS_DO_TESTS} -DKokkos_ENABLE_EXAMPLES=${KOKKOS_DO_EXAMPLES} ${KOKKOS_OPTION_CMD} ${KOKKOS_CUDA_OPTION_CMD} ${KOKKOS_HIP_OPTION_CMD} -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_CXX_EXTENSIONS=OFF ${STANDARD_CMD} ${KOKKOS_DEBUG_CMD} ${KOKKOS_BC_CMD} ${KOKKOS_HWLOC_CMD} ${KOKKOS_HWLOC_PATH_CMD} ${KOKKOS_MEMKIND_CMD} ${KOKKOS_MEMKIND_PATH_CMD} ${PASSTHRU_CMAKE_FLAGS} -DKokkos_ENABLE_DEPRECATION_WARNINGS=OFF ${KOKKOS_PATH}

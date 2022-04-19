@@ -44,7 +44,7 @@
 */
 
 #include <Kokkos_Core.hpp>
-#include <hip/TestHIP_Category.hpp>
+#include <TestHIP_Category.hpp>
 
 struct DummyFunctor {
   using value_type = int;
@@ -60,8 +60,11 @@ __global__ void start_intra_block_scan()
   __syncthreads();
 
   DummyFunctor f;
-  Kokkos::Impl::hip_intra_block_reduce_scan<true, DummyFunctor, void>(f,
-                                                                      values);
+  typename Kokkos::Impl::FunctorAnalysis<
+      Kokkos::Impl::FunctorPatternInterface::SCAN,
+      Kokkos::RangePolicy<Kokkos::Experimental::HIP>, DummyFunctor>::Reducer
+      reducer(&f);
+  Kokkos::Impl::hip_intra_block_reduce_scan<true>(reducer, values);
 
   __syncthreads();
   if (values[i] != ((i + 2) * (i + 1)) / 2) {

@@ -42,7 +42,6 @@
 //@HEADER
 */
 
-#include <stdexcept>
 #include <sstream>
 #include <iostream>
 #include <limits>
@@ -73,11 +72,6 @@ struct AddPlus {
   KOKKOS_INLINE_FUNCTION
   void join(value_type& dest, const value_type& src) const { dest += src + 1; }
 
-  KOKKOS_INLINE_FUNCTION
-  void join(volatile value_type& dest, const volatile value_type& src) const {
-    dest += src + 1;
-  }
-
   // Optional.
   KOKKOS_INLINE_FUNCTION
   void init(value_type& val) const { val = value_type(); }
@@ -102,8 +96,6 @@ struct FunctorScalar<0> {
   void operator()(const int& i, double& update) const { update += i; }
 };
 
-// FIXME_SYCL requires TeamPolicy
-#ifndef KOKKOS_ENABLE_SYCL
 template <>
 struct FunctorScalar<1> {
   using team_type = Kokkos::TeamPolicy<>::member_type;
@@ -117,7 +109,6 @@ struct FunctorScalar<1> {
     update += 1.0 / team.team_size() * team.league_rank();
   }
 };
-#endif
 
 template <int ISTEAM>
 struct FunctorScalarInit;
@@ -135,8 +126,6 @@ struct FunctorScalarInit<0> {
   void init(double& update) const { update = 0.0; }
 };
 
-// FIXME_SYCL requires TeamPolicy
-#ifndef KOKKOS_ENABLE_SYCL
 template <>
 struct FunctorScalarInit<1> {
   using team_type = Kokkos::TeamPolicy<>::member_type;
@@ -153,7 +142,6 @@ struct FunctorScalarInit<1> {
   KOKKOS_INLINE_FUNCTION
   void init(double& update) const { update = 0.0; }
 };
-#endif
 
 template <int ISTEAM>
 struct FunctorScalarFinal;
@@ -171,8 +159,6 @@ struct FunctorScalarFinal<0> {
   void final(double& update) const { result() = update; }
 };
 
-// FIXME_SYCL requires TeamPolicy
-#ifndef KOKKOS_ENABLE_SYCL
 template <>
 struct FunctorScalarFinal<1> {
   using team_type = Kokkos::TeamPolicy<>::member_type;
@@ -189,7 +175,6 @@ struct FunctorScalarFinal<1> {
   KOKKOS_INLINE_FUNCTION
   void final(double& update) const { result() = update; }
 };
-#endif
 
 template <int ISTEAM>
 struct FunctorScalarJoin;
@@ -204,13 +189,9 @@ struct FunctorScalarJoin<0> {
   void operator()(const int& i, double& update) const { update += i; }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 };
 
-// FIXME_SYCL requires TeamPolicy
-#ifndef KOKKOS_ENABLE_SYCL
 template <>
 struct FunctorScalarJoin<1> {
   using team_type = Kokkos::TeamPolicy<>::member_type;
@@ -225,11 +206,8 @@ struct FunctorScalarJoin<1> {
   }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 };
-#endif
 
 template <int ISTEAM>
 struct FunctorScalarJoinFinal;
@@ -244,16 +222,12 @@ struct FunctorScalarJoinFinal<0> {
   void operator()(const int& i, double& update) const { update += i; }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 
   KOKKOS_INLINE_FUNCTION
   void final(double& update) const { result() = update; }
 };
 
-// FIXME_SYCL requires TeamPolicy
-#ifndef KOKKOS_ENABLE_SYCL
 template <>
 struct FunctorScalarJoinFinal<1> {
   using team_type = Kokkos::TeamPolicy<>::member_type;
@@ -268,14 +242,11 @@ struct FunctorScalarJoinFinal<1> {
   }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 
   KOKKOS_INLINE_FUNCTION
   void final(double& update) const { result() = update; }
 };
-#endif
 
 template <int ISTEAM>
 struct FunctorScalarJoinInit;
@@ -290,16 +261,12 @@ struct FunctorScalarJoinInit<0> {
   void operator()(const int& i, double& update) const { update += i; }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 
   KOKKOS_INLINE_FUNCTION
   void init(double& update) const { update = 0.0; }
 };
 
-// FIXME_SYCL requires TeamPolicy
-#ifndef KOKKOS_ENABLE_SYCL
 template <>
 struct FunctorScalarJoinInit<1> {
   using team_type = Kokkos::TeamPolicy<>::member_type;
@@ -314,14 +281,11 @@ struct FunctorScalarJoinInit<1> {
   }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 
   KOKKOS_INLINE_FUNCTION
   void init(double& update) const { update = 0.0; }
 };
-#endif
 
 template <int ISTEAM>
 struct FunctorScalarJoinFinalInit;
@@ -336,9 +300,7 @@ struct FunctorScalarJoinFinalInit<0> {
   void operator()(const int& i, double& update) const { update += i; }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 
   KOKKOS_INLINE_FUNCTION
   void final(double& update) const { result() = update; }
@@ -347,8 +309,6 @@ struct FunctorScalarJoinFinalInit<0> {
   void init(double& update) const { update = 0.0; }
 };
 
-// FIXME_SYCL requires TeamPolicy
-#ifndef KOKKOS_ENABLE_SYCL
 template <>
 struct FunctorScalarJoinFinalInit<1> {
   using team_type = Kokkos::TeamPolicy<>::member_type;
@@ -363,9 +323,7 @@ struct FunctorScalarJoinFinalInit<1> {
   }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double& dst, const volatile double& update) const {
-    dst += update;
-  }
+  void join(double& dst, const double& update) const { dst += update; }
 
   KOKKOS_INLINE_FUNCTION
   void final(double& update) const { result() = update; }
@@ -373,7 +331,6 @@ struct FunctorScalarJoinFinalInit<1> {
   KOKKOS_INLINE_FUNCTION
   void init(double& update) const { update = 0.0; }
 };
-#endif
 
 struct Functor1 {
   KOKKOS_INLINE_FUNCTION
@@ -400,7 +357,7 @@ struct Functor2 {
   }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile double dst[], const volatile double src[]) const {
+  void join(double dst[], const double src[]) const {
     for (unsigned i = 0; i < value_count; ++i) dst[i] += src[i];
   }
 };
@@ -460,11 +417,11 @@ struct TestReduceCombinatoricalInstantiation {
                        Test::ReduceCombinatorical::AddPlus<double>(value));
     if ((Kokkos::DefaultExecutionSpace::concurrency() > 1) &&
         (ExecSpace::concurrency() > 1) && (expected_result > 0)) {
-      ASSERT_TRUE(expected_result < value);
+      ASSERT_LT(expected_result, value);
     } else if (((Kokkos::DefaultExecutionSpace::concurrency() > 1) ||
                 (ExecSpace::concurrency() > 1)) &&
                (expected_result > 0)) {
-      ASSERT_TRUE(expected_result <= value);
+      ASSERT_LE(expected_result, value);
     } else {
       ASSERT_EQ(expected_result, value);
     }
@@ -474,11 +431,11 @@ struct TestReduceCombinatoricalInstantiation {
     CallParallelReduce(args..., add);
     if ((Kokkos::DefaultExecutionSpace::concurrency() > 1) &&
         (ExecSpace::concurrency() > 1) && (expected_result > 0)) {
-      ASSERT_TRUE(expected_result < value);
+      ASSERT_LT(expected_result, value);
     } else if (((Kokkos::DefaultExecutionSpace::concurrency() > 1) ||
                 (ExecSpace::concurrency() > 1)) &&
                (expected_result > 0)) {
-      ASSERT_TRUE(expected_result <= value);
+      ASSERT_LE(expected_result, value);
     } else {
       ASSERT_EQ(expected_result, value);
     }

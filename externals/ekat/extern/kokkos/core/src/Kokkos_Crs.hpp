@@ -179,7 +179,9 @@ class GetCrsTransposeCounts {
     const closure_type closure(*this,
                                policy_type(0, index_type(in.entries.size())));
     closure.execute();
-    execution_space().fence();
+    execution_space().fence(
+        "Kokkos::Impl::GetCrsTransposeCounts::GetCrsTransposeCounts: fence "
+        "after functor execution");
   }
 };
 
@@ -189,7 +191,8 @@ class CrsRowMapFromCounts {
   using execution_space = typename InCounts::execution_space;
   using value_type      = typename OutRowMap::value_type;
   using index_type      = typename InCounts::size_type;
-  using last_value_type = Kokkos::View<value_type, execution_space>;
+  using last_value_type =
+      Kokkos::View<value_type, typename InCounts::device_type>;
 
  private:
   InCounts m_in;
@@ -199,7 +202,7 @@ class CrsRowMapFromCounts {
  public:
   KOKKOS_INLINE_FUNCTION
   void operator()(index_type i, value_type& update, bool final_pass) const {
-    if (i < m_in.size()) {
+    if (i < static_cast<index_type>(m_in.size())) {
       update += m_in(i);
       if (final_pass) m_out(i + 1) = update;
     } else if (final_pass) {
@@ -210,8 +213,7 @@ class CrsRowMapFromCounts {
   KOKKOS_INLINE_FUNCTION
   void init(value_type& update) const { update = 0; }
   KOKKOS_INLINE_FUNCTION
-  void join(volatile value_type& update,
-            const volatile value_type& input) const {
+  void join(value_type& update, const value_type& input) const {
     update += input;
   }
   using self_type = CrsRowMapFromCounts<InCounts, OutRowMap>;
@@ -222,8 +224,8 @@ class CrsRowMapFromCounts {
     using closure_type = Kokkos::Impl::ParallelScan<self_type, policy_type>;
     closure_type closure(*this, policy_type(0, m_in.size() + 1));
     closure.execute();
-    auto last_value = Kokkos::create_mirror_view(m_last_value);
-    Kokkos::deep_copy(last_value, m_last_value);
+    auto last_value =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, m_last_value);
     return last_value();
   }
 };
@@ -261,7 +263,9 @@ class FillCrsTransposeEntries {
     using closure_type = Kokkos::Impl::ParallelFor<self_type, policy_type>;
     const closure_type closure(*this, policy_type(0, index_type(in.numRows())));
     closure.execute();
-    execution_space().fence();
+    execution_space().fence(
+        "Kokkos::Impl::FillCrsTransposeEntries::FillCrsTransposeEntries: fence "
+        "after functor execution");
   }
 };
 

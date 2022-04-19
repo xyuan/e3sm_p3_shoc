@@ -54,9 +54,10 @@
 #endif
 
 namespace Kokkos {
+namespace Impl {
 
 KOKKOS_FORCEINLINE_FUNCTION
-int log2(unsigned i) {
+int int_log2(unsigned i) {
   enum : int { shift = sizeof(unsigned) * CHAR_BIT - 1 };
 #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
   return shift - __clz(i);
@@ -75,8 +76,6 @@ int log2(unsigned i) {
   return offset;
 #endif
 }
-
-namespace Impl {
 
 /**\brief  Find first zero bit.
  *
@@ -148,7 +147,7 @@ int bit_count(unsigned i) {
 
 KOKKOS_INLINE_FUNCTION
 unsigned integral_power_of_two_that_contains(const unsigned N) {
-  const unsigned i = Kokkos::log2(N);
+  const unsigned i = int_log2(N);
   return ((1u << i) < N) ? i + 1 : i;
 }
 

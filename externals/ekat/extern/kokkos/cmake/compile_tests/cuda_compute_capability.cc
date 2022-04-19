@@ -43,6 +43,7 @@
 */
 
 #include <iostream>
+#include <cuda_runtime_api.h>
 
 int main() {
   cudaDeviceProp device_properties;
@@ -72,6 +73,7 @@ int main() {
     case 72: std::cout << "Set -DKokkos_ARCH_VOLTA72=ON ." << std::endl; break;
     case 75: std::cout << "Set -DKokkos_ARCH_TURING75=ON ." << std::endl; break;
     case 80: std::cout << "Set -DKokkos_ARCH_AMPERE80=ON ." << std::endl; break;
+    case 86: std::cout << "Set -DKokkos_ARCH_AMPERE86=ON ." << std::endl; break;
     default:
       std::cout << "Compute capability " << compute_capability
                 << " is not supported" << std::endl;

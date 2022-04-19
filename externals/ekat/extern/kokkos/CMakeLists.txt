@@ -1,7 +1,8 @@
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 # Disable in-source builds to prevent source tree corruption.
 if( "${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}" )
-  message( FATAL_ERROR "FATAL: In-source builds are not allowed. You should create a separate directory for build files." )
+  message( FATAL_ERROR "FATAL: In-source builds are not allowed. You should create a separate directory for build files and delete CMakeCache.txt." )
 endif()
 
 # We want to determine if options are given with the wrong case
@@ -27,11 +28,6 @@ SET(KOKKOS_SOURCE_DIR    ${CMAKE_CURRENT_SOURCE_DIR})
 SET(KOKKOS_SRC_PATH      ${Kokkos_SOURCE_DIR})
 SET(KOKKOS_PATH          ${Kokkos_SOURCE_DIR})
 SET(KOKKOS_TOP_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR})
-
-# Needed to simplify syntax of if statements
-CMAKE_POLICY(SET CMP0054 NEW)
-# Needed to make IN_LIST a valid operator
-CMAKE_POLICY(SET CMP0057 NEW)
 
 # Is this a build as part of Trilinos?
 IF(COMMAND TRIBITS_PACKAGE_DECL)
@@ -72,10 +68,33 @@ ENDFUNCTION()
 LIST(APPEND CMAKE_MODULE_PATH cmake/Modules)
 
 IF(NOT KOKKOS_HAS_TRILINOS)
-  cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
   set(CMAKE_DISABLE_SOURCE_CHANGES ON)
   set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
+
+  # What language are we compiling Kokkos as
+  # downstream dependencies need to match this!
+  SET(KOKKOS_COMPILE_LANGUAGE CXX)
+  # use lower case here since we didn't parse options yet
+  IF (Kokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE)
+
+    # Without this as a language for the package we would get a C++ compiler enabled.
+    # but we still need a C++ compiler even if we build all our cpp files as CUDA only
+    # because otherwise the C++ features don't work etc.
+    # This is just the rather odd way CMake does this, since CUDA doesn't imply C++ even
+    # though it is a C++ extension ... (but I guess it didn't use to be back in CUDA 4 or 5
+    # days.
+    SET(KOKKOS_INTERNAL_EXTRA_COMPILE_LANGUAGE CXX)
+
+    IF (Kokkos_ENABLE_CUDA)
+      SET(KOKKOS_COMPILE_LANGUAGE CUDA)
+    ENDIF()
+  ENDIF()
+
   IF (Spack_WORKAROUND)
+    IF (Kokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE)
+      MESSAGE(FATAL_ERROR "Can't currently use Kokkos_ENABLE_COMPILER_AS_CMAKE_LANGUAGE in a spack installation!")
+    ENDIF()
+
     #if we are explicitly using Spack for development,
     #nuke the Spack compiler
     SET(SPACK_CXX $ENV{SPACK_CXX})
@@ -86,7 +105,7 @@ IF(NOT KOKKOS_HAS_TRILINOS)
   ENDIF()
   # Always call the project command to define Kokkos_ variables
   # and to make sure that C++ is an enabled language
-  PROJECT(Kokkos CXX)
+  PROJECT(Kokkos ${KOKKOS_COMPILE_LANGUAGE} ${KOKKOS_INTERNAL_EXTRA_COMPILE_LANGUAGE})
   IF(NOT HAS_PARENT)
     IF (NOT CMAKE_BUILD_TYPE)
       SET(DEFAULT_BUILD_TYPE "RelWithDebInfo")
@@ -111,27 +130,22 @@ ENDIF()
 
 
 set(Kokkos_VERSION_MAJOR 3)
-set(Kokkos_VERSION_MINOR 3)
-set(Kokkos_VERSION_PATCH 0)
+set(Kokkos_VERSION_MINOR 6)
+set(Kokkos_VERSION_PATCH 99)
 set(Kokkos_VERSION "${Kokkos_VERSION_MAJOR}.${Kokkos_VERSION_MINOR}.${Kokkos_VERSION_PATCH}")
 math(EXPR KOKKOS_VERSION "${Kokkos_VERSION_MAJOR} * 10000 + ${Kokkos_VERSION_MINOR} * 100 + ${Kokkos_VERSION_PATCH}")
-
-IF(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.12.0")
-  MESSAGE(STATUS "Setting policy CMP0074 to use <Package>_ROOT variables")
-  CMAKE_POLICY(SET CMP0074 NEW)
-ENDIF()
 
 # Load either the real TriBITS or a TriBITS wrapper
 # for certain utility functions that are universal (like GLOBAL_SET)
 INCLUDE(${KOKKOS_SRC_PATH}/cmake/fake_tribits.cmake)
 
-IF (Kokkos_ENABLE_CUDA AND ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.14.0")
-  #If we are building CUDA, we have tricked CMake because we declare a CXX project
-  #If the default C++ standard for a given compiler matches the requested
-  #standard, then CMake just omits the -std flag in later versions of CMake
-  #This breaks CUDA compilation (CUDA compiler can have a different default
-  #-std then the underlying host compiler by itself). Setting this variable
-  #forces CMake to always add the -std flag even if it thinks it doesn't need it
+IF (Kokkos_ENABLE_CUDA)
+  # If we are building CUDA, we have tricked CMake because we declare a CXX project
+  # If the default C++ standard for a given compiler matches the requested
+  # standard, then CMake just omits the -std flag in later versions of CMake
+  # This breaks CUDA compilation (CUDA compiler can have a different default
+  # -std then the underlying host compiler by itself). Setting this variable
+  # forces CMake to always add the -std flag even if it thinks it doesn't need it
   GLOBAL_SET(CMAKE_CXX_STANDARD_DEFAULT 98)
 ENDIF()
 
@@ -139,15 +153,23 @@ ENDIF()
 # I really wish these were regular variables
 # but scoping issues can make it difficult
 GLOBAL_SET(KOKKOS_COMPILE_OPTIONS)
-GLOBAL_SET(KOKKOS_LINK_OPTIONS -DKOKKOS_DEPENDENCE)
+GLOBAL_SET(KOKKOS_LINK_OPTIONS)
 GLOBAL_SET(KOKKOS_CUDA_OPTIONS)
 GLOBAL_SET(KOKKOS_CUDAFE_OPTIONS)
 GLOBAL_SET(KOKKOS_XCOMPILER_OPTIONS)
 # We need to append text here for making sure TPLs
 # we import are available for an installed Kokkos
 GLOBAL_SET(KOKKOS_TPL_EXPORTS)
-# this could probably be scoped to project
+# KOKKOS_DEPENDENCE is used by kokkos_launch_compiler
 GLOBAL_SET(KOKKOS_COMPILE_DEFINITIONS KOKKOS_DEPENDENCE)
+# MSVC never goes through kokkos_launch_compiler
+IF(NOT MSVC)
+    GLOBAL_APPEND(KOKKOS_LINK_OPTIONS -DKOKKOS_DEPENDENCE)
+ENDIF()
+
+IF(Kokkos_ENABLE_TESTS AND NOT KOKKOS_HAS_TRILINOS)
+  find_package(GTest)
+ENDIF()
 
 # Include a set of Kokkos-specific wrapper functions that
 # will either call raw CMake or TriBITS
@@ -172,10 +194,6 @@ KOKKOS_SETUP_BUILD_ENVIRONMENT()
 # 7) Export and install targets
 
 OPTION(BUILD_SHARED_LIBS "Build shared libraries" OFF)
-# Workaround for building position independent code.
-IF(BUILD_SHARED_LIBS)
-  SET(CMAKE_POSITION_INDEPENDENT_CODE ON)
-ENDIF()
 
 SET(KOKKOS_EXT_LIBRARIES Kokkos::kokkos Kokkos::kokkoscore Kokkos::kokkoscontainers Kokkos::kokkosalgorithms)
 SET(KOKKOS_INT_LIBRARIES kokkos kokkoscore kokkoscontainers kokkosalgorithms)
@@ -204,8 +222,18 @@ ENDIF()
 IF (KOKKOS_HAS_TRILINOS)
   # Overwrite the old flags at the top-level
   # Because Tribits doesn't use lists, it uses spaces for the list of CXX flags
-  # we have to match the annoying behavior
-  STRING(REPLACE ";" " " KOKKOSCORE_COMPILE_OPTIONS "${KOKKOS_COMPILE_OPTIONS}")
+  # we have to match the annoying behavior, also we have to preserve quotes
+  # which needs another workaround.
+  SET(KOKKOS_COMPILE_OPTIONS_TMP)
+  FOREACH(OPTION ${KOKKOS_COMPILE_OPTIONS})
+    STRING(FIND "${OPTION}" " " OPTION_HAS_WHITESPACE)
+    IF(OPTION_HAS_WHITESPACE EQUAL -1)
+      LIST(APPEND KOKKOS_COMPILE_OPTIONS_TMP "${OPTION}")
+    ELSE()
+      LIST(APPEND KOKKOS_COMPILE_OPTIONS_TMP "\"${OPTION}\"")
+    ENDIF()
+  ENDFOREACH()
+  STRING(REPLACE ";" " " KOKKOSCORE_COMPILE_OPTIONS "${KOKKOS_COMPILE_OPTIONS_TMP}")
   LIST(APPEND KOKKOS_ALL_COMPILE_OPTIONS ${KOKKOS_COMPILE_OPTIONS})
   IF (KOKKOS_ENABLE_CUDA)
     LIST(APPEND KOKKOS_ALL_COMPILE_OPTIONS ${KOKKOS_CUDA_OPTIONS})

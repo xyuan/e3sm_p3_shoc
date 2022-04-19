@@ -52,7 +52,6 @@
 
 #include <utility>
 #include <impl/Kokkos_Spinwait.hpp>
-#include <impl/Kokkos_FunctorAdapter.hpp>
 #include <impl/Kokkos_HostThreadTeam.hpp>
 
 #include <Kokkos_Atomic.hpp>
@@ -168,90 +167,76 @@ class ThreadsExecTeamMember {
   template <class ValueType>
   KOKKOS_INLINE_FUNCTION void team_broadcast(ValueType& value,
                                              const int& thread_id) const {
-#if !defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    {
-      (void)value;
-      (void)thread_id;
-    }
-#else
-    // Make sure there is enough scratch space:
-    using type = typename if_c<sizeof(ValueType) < TEAM_REDUCE_SIZE, ValueType,
-                               void>::type;
+    KOKKOS_IF_ON_DEVICE(((void)value; (void)thread_id;))
 
-    if (m_team_base) {
-      type* const local_value = ((type*)m_team_base[0]->scratch_memory());
-      memory_fence();
-      team_barrier();
-      if (team_rank() == thread_id) *local_value = value;
-      memory_fence();
-      team_barrier();
-      value = *local_value;
-    }
-#endif
+    KOKKOS_IF_ON_HOST((
+        // Make sure there is enough scratch space:
+        using type = typename if_c<sizeof(ValueType) < TEAM_REDUCE_SIZE,
+                                   ValueType, void>::type;
+
+        if (m_team_base) {
+          type* const local_value = ((type*)m_team_base[0]->scratch_memory());
+          memory_fence();
+          team_barrier();
+          if (team_rank() == thread_id) *local_value = value;
+          memory_fence();
+          team_barrier();
+          value = *local_value;
+        }))
   }
 
   template <class Closure, class ValueType>
   KOKKOS_INLINE_FUNCTION void team_broadcast(Closure const& f, ValueType& value,
                                              const int& thread_id) const {
-#if !defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-    {
-      (void)f;
-      (void)value;
-      (void)thread_id;
-    }
-#else
-    // Make sure there is enough scratch space:
-    using type = typename if_c<sizeof(ValueType) < TEAM_REDUCE_SIZE, ValueType,
-                               void>::type;
-    f(value);
-    if (m_team_base) {
-      type* const local_value = ((type*)m_team_base[0]->scratch_memory());
-      memory_fence();
-      team_barrier();
-      if (team_rank() == thread_id) *local_value = value;
-      memory_fence();
-      team_barrier();
-      value = *local_value;
-    }
-#endif
+    KOKKOS_IF_ON_DEVICE(((void)f; (void)value; (void)thread_id;))
+
+    KOKKOS_IF_ON_HOST((
+        // Make sure there is enough scratch space:
+        using type = typename if_c<sizeof(ValueType) < TEAM_REDUCE_SIZE,
+                                   ValueType, void>::type;
+        f(value); if (m_team_base) {
+          type* const local_value = ((type*)m_team_base[0]->scratch_memory());
+          memory_fence();
+          team_barrier();
+          if (team_rank() == thread_id) *local_value = value;
+          memory_fence();
+          team_barrier();
+          value = *local_value;
+        }))
   }
 
   template <typename Type>
   KOKKOS_INLINE_FUNCTION
       typename std::enable_if<!Kokkos::is_reducer<Type>::value, Type>::type
-      team_reduce(const Type& value) const
-#if !defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-  {
-    return value;
+      team_reduce(const Type& value) const {
+    KOKKOS_IF_ON_DEVICE((return value;))
+
+    KOKKOS_IF_ON_HOST((
+        // Make sure there is enough scratch space:
+        using type =
+            typename if_c<sizeof(Type) < TEAM_REDUCE_SIZE, Type, void>::type;
+
+        if (nullptr == m_exec) return value;
+
+        if (team_rank() != team_size() - 1) *
+            ((volatile type*)m_exec->scratch_memory()) = value;
+
+        memory_fence();
+
+        type& accum = *((type*)m_team_base[0]->scratch_memory());
+
+        if (team_fan_in()) {
+          accum = value;
+          for (int i = 1; i < m_team_size; ++i) {
+            accum += *((type*)m_team_base[i]->scratch_memory());
+          }
+          memory_fence();
+        }
+
+        team_fan_out();
+
+        return accum;))
   }
-#else
-  {
-    // Make sure there is enough scratch space:
-    using type =
-        typename if_c<sizeof(Type) < TEAM_REDUCE_SIZE, Type, void>::type;
-
-    if (nullptr == m_exec) return value;
-
-    if (team_rank() != team_size() - 1)
-      *((volatile type*)m_exec->scratch_memory()) = value;
-
-    memory_fence();
-
-    type& accum = *((type*)m_team_base[0]->scratch_memory());
-
-    if (team_fan_in()) {
-      accum = value;
-      for (int i = 1; i < m_team_size; ++i) {
-        accum += *((type*)m_team_base[i]->scratch_memory());
-      }
-      memory_fence();
-    }
-
-    team_fan_out();
-
-    return accum;
-  }
-#endif
 
   template <typename ReducerType>
   KOKKOS_INLINE_FUNCTION
@@ -263,55 +248,53 @@ class ThreadsExecTeamMember {
   template <typename ReducerType>
   KOKKOS_INLINE_FUNCTION
       typename std::enable_if<Kokkos::is_reducer<ReducerType>::value>::type
-#if !defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-      team_reduce(const ReducerType&,
-                  const typename ReducerType::value_type) const {
-  }
-#else
       team_reduce(const ReducerType& reducer,
                   const typename ReducerType::value_type contribution) const {
-    using value_type = typename ReducerType::value_type;
-    // Make sure there is enough scratch space:
-    using type = typename if_c<sizeof(value_type) < TEAM_REDUCE_SIZE,
-                               value_type, void>::type;
+    KOKKOS_IF_ON_DEVICE(((void)reducer; (void)contribution;))
 
-    if (nullptr == m_exec) return;
+    KOKKOS_IF_ON_HOST((
+        using value_type = typename ReducerType::value_type;
+        // Make sure there is enough scratch space:
+        using type = typename if_c<sizeof(value_type) < TEAM_REDUCE_SIZE,
+                                   value_type, void>::type;
 
-    type* const local_value = ((type*)m_exec->scratch_memory());
+        if (nullptr == m_exec) return;
 
-    // Set this thread's contribution
-    if (team_rank() != team_size() - 1) *local_value = contribution;
+        type* const local_value = ((type*)m_exec->scratch_memory());
 
-    // Fence to make sure the base team member has access:
-    memory_fence();
+        // Set this thread's contribution
+        if (team_rank() != team_size() - 1) { *local_value = contribution; }
 
-    if (team_fan_in()) {
-      // The last thread to synchronize returns true, all other threads wait for
-      // team_fan_out()
-      type* const team_value = ((type*)m_team_base[0]->scratch_memory());
+        // Fence to make sure the base team member has access:
+        memory_fence();
 
-      *team_value = contribution;
-      // Join to the team value:
-      for (int i = 1; i < m_team_size; ++i) {
-        reducer.join(*team_value, *((type*)m_team_base[i]->scratch_memory()));
-      }
+        if (team_fan_in()) {
+          // The last thread to synchronize returns true, all other threads
+          // wait for team_fan_out()
+          type* const team_value = ((type*)m_team_base[0]->scratch_memory());
 
-      // Team base thread may "lap" member threads so copy out to their local
-      // value.
-      for (int i = 1; i < m_team_size; ++i) {
-        *((type*)m_team_base[i]->scratch_memory()) = *team_value;
-      }
+          *team_value = contribution;
+          // Join to the team value:
+          for (int i = 1; i < m_team_size; ++i) {
+            reducer.join(*team_value,
+                         *((type*)m_team_base[i]->scratch_memory()));
+          }
 
-      // Fence to make sure all team members have access
-      memory_fence();
-    }
+          // Team base thread may "lap" member threads so copy out to their
+          // local value.
+          for (int i = 1; i < m_team_size; ++i) {
+            *((type*)m_team_base[i]->scratch_memory()) = *team_value;
+          }
 
-    team_fan_out();
+          // Fence to make sure all team members have access
+          memory_fence();
+        }
 
-    // Value was changed by the team base
-    reducer.reference() = *((type volatile const*)local_value);
+        team_fan_out();
+
+        // Value was changed by the team base
+        reducer.reference() = *local_value;))
   }
-#endif
 
   /** \brief  Intra-team exclusive prefix sum with team_rank() ordering
    *          with intra-team non-deterministic ordering accumulation.
@@ -324,59 +307,54 @@ class ThreadsExecTeamMember {
    */
   template <typename ArgType>
   KOKKOS_INLINE_FUNCTION ArgType team_scan(const ArgType& value,
-                                           ArgType* const global_accum) const
-#if !defined(KOKKOS_ACTIVE_EXECUTION_MEMORY_SPACE_HOST)
-  {
-    (void)global_accum;
-    return value;
-  }
-#else
-  {
-    // Make sure there is enough scratch space:
-    using type =
-        typename if_c<sizeof(ArgType) < TEAM_REDUCE_SIZE, ArgType, void>::type;
+                                           ArgType* const global_accum) const {
+    KOKKOS_IF_ON_DEVICE(((void)global_accum; return value;))
 
-    if (nullptr == m_exec) return type(0);
+    KOKKOS_IF_ON_HOST((  // Make sure there is enough scratch space:
+        using type = typename if_c<sizeof(ArgType) < TEAM_REDUCE_SIZE, ArgType,
+                                   void>::type;
 
-    volatile type* const work_value = ((type*)m_exec->scratch_memory());
+        if (nullptr == m_exec) return type(0);
 
-    *work_value = value;
+        volatile type* const work_value = ((type*)m_exec->scratch_memory());
 
-    memory_fence();
+        *work_value = value;
 
-    if (team_fan_in()) {
-      // The last thread to synchronize returns true, all other threads wait for
-      // team_fan_out() m_team_base[0]                 == highest ranking team
-      // member m_team_base[ m_team_size - 1 ] == lowest ranking team member
-      //
-      // 1) copy from lower to higher rank, initialize lowest rank to zero
-      // 2) prefix sum from lowest to highest rank, skipping lowest rank
+        memory_fence();
 
-      type accum = 0;
+        if (team_fan_in()) {
+          // The last thread to synchronize returns true, all other threads wait
+          // for team_fan_out() m_team_base[0]                 == highest
+          // ranking team member m_team_base[ m_team_size - 1 ] == lowest
+          // ranking team member
+          //
+          // 1) copy from lower to higher rank, initialize lowest rank to zero
+          // 2) prefix sum from lowest to highest rank, skipping lowest rank
 
-      if (global_accum) {
-        for (int i = m_team_size; i--;) {
-          type& val = *((type*)m_team_base[i]->scratch_memory());
-          accum += val;
+          type accum = 0;
+
+          if (global_accum) {
+            for (int i = m_team_size; i--;) {
+              type& val = *((type*)m_team_base[i]->scratch_memory());
+              accum += val;
+            }
+            accum = atomic_fetch_add(global_accum, accum);
+          }
+
+          for (int i = m_team_size; i--;) {
+            type& val         = *((type*)m_team_base[i]->scratch_memory());
+            const type offset = accum;
+            accum += val;
+            val = offset;
+          }
+
+          memory_fence();
         }
-        accum = atomic_fetch_add(global_accum, accum);
-      }
 
-      for (int i = m_team_size; i--;) {
-        type& val = *((type*)m_team_base[i]->scratch_memory());
-        const type offset = accum;
-        accum += val;
-        val = offset;
-      }
+        team_fan_out();
 
-      memory_fence();
-    }
-
-    team_fan_out();
-
-    return *work_value;
+        return *work_value;))
   }
-#endif
 
   /** \brief  Intra-team exclusive prefix sum with team_rank() ordering.
    *
@@ -891,14 +869,16 @@ KOKKOS_INLINE_FUNCTION
       thread, count);
 }
 
-template <typename iType>
-KOKKOS_INLINE_FUNCTION
-    Impl::ThreadVectorRangeBoundariesStruct<iType, Impl::ThreadsExecTeamMember>
-    ThreadVectorRange(const Impl::ThreadsExecTeamMember& thread,
-                      const iType& arg_begin, const iType& arg_end) {
+template <typename iType1, typename iType2>
+KOKKOS_INLINE_FUNCTION Impl::ThreadVectorRangeBoundariesStruct<
+    typename std::common_type<iType1, iType2>::type,
+    Impl::ThreadsExecTeamMember>
+ThreadVectorRange(const Impl::ThreadsExecTeamMember& thread,
+                  const iType1& arg_begin, const iType2& arg_end) {
+  using iType = typename std::common_type<iType1, iType2>::type;
   return Impl::ThreadVectorRangeBoundariesStruct<iType,
                                                  Impl::ThreadsExecTeamMember>(
-      thread, arg_begin, arg_end);
+      thread, iType(arg_begin), iType(arg_end));
 }
 
 KOKKOS_INLINE_FUNCTION
@@ -1081,10 +1061,33 @@ KOKKOS_INLINE_FUNCTION void parallel_scan(
     const Impl::ThreadVectorRangeBoundariesStruct<
         iType, Impl::ThreadsExecTeamMember>& loop_boundaries,
     const FunctorType& lambda) {
-  using ValueTraits = Kokkos::Impl::FunctorValueTraits<FunctorType, void>;
-  using value_type  = typename ValueTraits::value_type;
+  using value_type =
+      typename Impl::FunctorAnalysis<Impl::FunctorPatternInterface::SCAN,
+                                     TeamPolicy<Threads>,
+                                     FunctorType>::value_type;
 
   value_type scan_val = value_type();
+
+#ifdef KOKKOS_ENABLE_PRAGMA_IVDEP
+#pragma ivdep
+#endif
+  for (iType i = loop_boundaries.start; i < loop_boundaries.end;
+       i += loop_boundaries.increment) {
+    lambda(i, scan_val, true);
+  }
+}
+
+/** \brief  Intra-thread vector parallel scan with reducer
+ *
+ */
+template <typename iType, class FunctorType, typename ReducerType>
+KOKKOS_INLINE_FUNCTION
+    typename std::enable_if<Kokkos::is_reducer<ReducerType>::value>::type
+    parallel_scan(const Impl::ThreadVectorRangeBoundariesStruct<
+                      iType, Impl::ThreadsExecTeamMember>& loop_boundaries,
+                  const FunctorType& lambda, const ReducerType& reducer) {
+  typename ReducerType::value_type scan_val;
+  reducer.init(scan_val);
 
 #ifdef KOKKOS_ENABLE_PRAGMA_IVDEP
 #pragma ivdep
