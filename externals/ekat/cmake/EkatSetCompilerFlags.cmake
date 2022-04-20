@@ -130,6 +130,39 @@ macro (SetCompilerFlags)
     endif ()
   endif ()
 
+  # Handle HIP
+  find_package(HIP QUIET)
+  if(HIP_FOUND)
+    message(STATUS "Found HIP: " ${HIP_VERSION})
+
+    if(NOT DEFINED HIP_PATH)
+      if(NOT DEFINED ENV{HIP_PATH})
+        set(HIP_PATH "/opt/rocm/hip" CACHE PATH "Path to HIP installed")
+      else()
+        set(HIP_PATH $ENV{HIP_PATH} CACHE PATH "Path to HIP installed")
+      endif()
+    endif()
+
+    if(NOT DEFINED ROCM_PATH)
+      if(DEFINED ENV{ROCM_PATH})
+        set(ROCM_PATH $ENV{ROCM_PATH} CACHE PATH "Path to ROCM installed")
+      elseif(DEFINED ENV{HIP_PATH})
+        set(ROCM_PATH "$ENV{HIP_PATH}/.." CACHE PATH "Path to ROCM installed")
+      else()
+        set(ROCM_PATH "/opt/rocm" CACHE PATH "Path to ROCM installed")
+      endif()
+    endif()
+
+    # get the hip build flags 
+    execute_process(
+       COMMAND ${ROCM_PATH}/bin/hipconfig --cpp_config
+       OUTPUT_VARIABLE hip-clang-cxxflags
+       ERROR_QUIET)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${hip-clang-cxxflags}")
+
+    message (STATUS "HIP enabled!")
+  endif()
+
   ##############################################################################
   # Optimization flags
   # If OPT_FLAGS is set (to non-empty string), append it to Fortran/C/CXX release flags.

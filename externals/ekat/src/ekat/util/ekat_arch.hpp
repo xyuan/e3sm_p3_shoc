@@ -16,8 +16,10 @@ std::string ekat_config_string();
 
 template <typename ExeSpace>
 struct OnGpu { enum : bool { value = false }; };
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
 template <> struct OnGpu<Kokkos::Cuda> { enum : bool { value = true }; };
+#elif defined(KOKKOS_ENABLE_HIP)
+template <> struct OnGpu<Kokkos::Experimental::HIP> { enum : bool { value = true }; };
 #endif
 
 } // namespace ekat

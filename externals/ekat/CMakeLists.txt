@@ -32,6 +32,8 @@ if (Kokkos_ENABLE_CUDA)
 
   include (EkatSetNvccWrapper)
   EkatSetNvccWrapper()
+elseif (Kokkos_ENABLE_HIP)
+  EkatSetKokkosSourceDir()
 endif()
 
 # EKAT has mostly C++, but some Fortran too
