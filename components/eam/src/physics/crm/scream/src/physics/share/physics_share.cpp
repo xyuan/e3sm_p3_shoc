@@ -56,12 +56,56 @@ static Scalar wrap_name(Scalar input) {                                       \
 #undef cuda_wrap_single_arg
 };
 
+// Cuda implementations of std math routines are not necessarily BFB
+// with the host.
+template <typename ScalarT, typename DeviceT>
+struct HipWrap
+{
+  using Scalar = ScalarT;
+  using RangePolicy = typename ekat::KokkosTypes<DeviceT>::RangePolicy;
+
+  static Scalar cxx_pow(Scalar base, Scalar exp)
+  {
+    Scalar result;
+    RangePolicy policy(0,1);
+    Kokkos::parallel_reduce(policy, KOKKOS_LAMBDA(const Int&, Scalar& value) {
+        value = std::pow(base, exp);
+    }, result);
+
+    return result;
+  }
+
+#define hip_wrap_single_arg(wrap_name, func_call)                            \
+static Scalar wrap_name(Scalar input) {                                       \
+  Scalar result;                                                              \
+  RangePolicy policy(0,1);                                                    \
+  Kokkos::parallel_reduce(policy, KOKKOS_LAMBDA(const Int&, Scalar& value) {  \
+    value = func_call(input);                                                 \
+  }, result);                                                                 \
+  return result;                                                              \
+}
+
+  hip_wrap_single_arg(cxx_gamma, std::tgamma)
+  hip_wrap_single_arg(cxx_sqrt, std::sqrt)
+  hip_wrap_single_arg(cxx_cbrt, std::cbrt)
+  hip_wrap_single_arg(cxx_log, std::log)
+  hip_wrap_single_arg(cxx_log10, std::log10)
+  hip_wrap_single_arg(cxx_exp, std::exp)
+  hip_wrap_single_arg(cxx_expm1, std::expm1)
+  hip_wrap_single_arg(cxx_tanh, std::tanh)
+  hip_wrap_single_arg(cxx_erf, std::erf)
+
+#undef hip_wrap_single_arg
+};
+
 extern "C" {
 
 Real cxx_pow(Real base, Real exp)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_pow(base, exp);
+#elif defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_pow(base, exp);
 #else
   return std::pow(base, exp);
 #endif
@@ -69,8 +113,10 @@ Real cxx_pow(Real base, Real exp)
 
 Real cxx_gamma(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_gamma(input);
+#elif defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_gamma(input);
 #else
   return std::tgamma(input);
 #endif
@@ -78,8 +124,10 @@ Real cxx_gamma(Real input)
 
 Real cxx_cbrt(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_cbrt(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_cbrt(input);
 #else
   return std::cbrt(input);
 #endif
@@ -87,8 +135,10 @@ Real cxx_cbrt(Real input)
 
 Real cxx_sqrt(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_sqrt(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_sqrt(input);
 #else
   return std::sqrt(input);
 #endif
@@ -96,8 +146,10 @@ Real cxx_sqrt(Real input)
 
 Real cxx_log(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_log(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_log(input);
 #else
   return std::log(input);
 #endif
@@ -105,8 +157,10 @@ Real cxx_log(Real input)
 
 Real cxx_log10(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_log10(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_log10(input);
 #else
   return std::log10(input);
 #endif
@@ -114,8 +168,10 @@ Real cxx_log10(Real input)
 
 Real cxx_exp(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_exp(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_exp(input);
 #else
   return std::exp(input);
 #endif
@@ -123,8 +179,10 @@ Real cxx_exp(Real input)
 
 Real cxx_expm1(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_expm1(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_expm1(input);
 #else
   return std::expm1(input);
 #endif
@@ -132,8 +190,10 @@ Real cxx_expm1(Real input)
   
 Real cxx_tanh(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_tanh(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_tanh(input);
 #else
   return std::tanh(input);
 #endif
@@ -141,8 +201,10 @@ Real cxx_tanh(Real input)
 
 Real cxx_erf(Real input)
 {
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_erf(input);
+#if defined(KOKKOS_ENABLE_HIP)
+  return HipWrap<Real, DefaultDevice>::cxx_erf(input);
 #else
   return std::erf(input);
 #endif

@@ -130,6 +130,18 @@ if (CUDA_BUILD)
     enable_language(CUDA)
 endif()
 
+# Determine if this is a HIP build.
+if (Kokkos_ENABLE_HIP)
+  set(HIP_BUILD TRUE)
+else()
+  set(HIP_BUILD FALSE)
+endif ()
+
+# Add HIP as a language for HIP builds
+if (HIP_BUILD)
+    enable_language(HIP)
+endif()
+
 ### Scream default configuration options
 set(DEFAULT_MAX_RANKS 1)
 set(DEFAULT_MAX_THREADS 1)
@@ -137,7 +149,7 @@ set(DEFAULT_MIMIC_GPU FALSE)
 set(DEFAULT_FPE FALSE)
 set(DEFAULT_PACK_SIZE 1)
 set(DEFAULT_POSSIBLY_NO_PACK FALSE)
-if (CUDA_BUILD)
+if (CUDA_BUILD OR HIP_BUILD)
   # On the GPU, the pack size must be 1
   set(DEFAULT_PACK_SIZE 1)
   set(DEFAULT_MAX_THREADS 1)
@@ -296,6 +308,7 @@ if (SCREAM_DOUBLE_PRECISION)
 endif()
 
 print_var(CUDA_BUILD)
+print_var(HIP_BUILD)
 print_var(SCREAM_DOUBLE_PRECISION)
 print_var(SCREAM_MIMIC_GPU)
 print_var(SCREAM_FPE)
