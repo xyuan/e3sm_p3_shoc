@@ -22,7 +22,7 @@ void initialize_kokkos () {
   //   If for some reason we're running on a GPU platform, have Cuda enabled,
   // but are using a different execution space, this initialization is still
   // OK. The rank gets a GPU assigned and simply will ignore it.
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
   int nd;
   const auto ret = cudaGetDeviceCount(&nd);
   if (ret != cudaSuccess) {
@@ -36,8 +36,16 @@ void initialize_kokkos () {
   std::copy(key.begin(), key.end(), str.begin());
   str.back() = 0;
   args.push_back(const_cast<char*>(str.data()));
+#elif defined(KOKKOS_ENABLE_SYCL)
+  int nd = sycl::device::get_devices(sycl::info::device_type::gpu).size();
+  std::stringstream ss;
+  ss << "--kokkos-ndevices=" << nd;
+  const auto key = ss.str();
+  std::vector<char> str(key.size()+1);
+  std::copy(key.begin(), key.end(), str.begin());
+  str.back() = 0;
+  args.push_back(const_cast<char*>(str.data()));
 #endif
-
   const char* silence = "--kokkos-disable-warnings";
   args.push_back(const_cast<char*>(silence));
 

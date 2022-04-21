@@ -80,10 +80,12 @@ void parallel_reduce (const TeamMember& team,
         }
       });
 
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA)
     // Broadcast result to all threads by doing sum of one thread's
     // non-0 value and the rest of the 0s.
     Kokkos::Impl::CudaTeamMember::vector_reduce(Kokkos::Sum<ValueType>(local_tmp));
+#elif defined(KOKKOS_ENABLE_SYCL)
+    Kokkos::Impl::SYCLTeamMember::vector_reduce(Kokkos::Sum<ValueType>(local_tmp));
 #endif
 
    result = local_tmp;
@@ -367,6 +369,90 @@ struct ExeSpaceUtils<Kokkos::Cuda> {
 };
 #endif
 
+#ifdef KOKKOS_ENABLE_SYCL
+template <>
+struct ExeSpaceUtils<Kokkos::Experimental::SYCL> {
+  using TeamPolicy = Kokkos::TeamPolicy<Kokkos::Experimental::SYCL>;
+
+  static int num_warps (const int i) {
+    return (i+31)/32;
+  }
+
+  static TeamPolicy get_default_team_policy (Int ni, Int nk) {
+    return TeamPolicy(ni, std::min(128, 32*((nk + 31)/32)));
+  }
+
+  static TeamPolicy get_team_policy_force_team_size (Int ni, Int team_size) {
+    return TeamPolicy(ni, team_size);
+  }
+
+  // On GPU, the team-level ||scan in column_ops only works for team sizes that are a power of 2.
+  static TeamPolicy get_thread_range_parallel_scan_team_policy (Int league_size, Int team_size_request) {
+    auto prev_pow_2 = [](const int i) -> int {
+      // Multiply by 2 until pp2>i, then divide by 2 once.
+      int pp2 = 1;
+      while (pp2<=i) pp2 *= 2;
+      return pp2/2;
+    };
+
+    const int pp2 = prev_pow_2(team_size_request);
+    const int team_size = 32*num_warps(pp2);
+    return TeamPolicy(league_size, std::min(128, team_size));
+  }
+
+  // NOTE: f<bool,T> and f<T,bool> are *guaranteed* to be different overloads.
+  //       The latter is better when bool needs a default, the former is
+  //       better when bool must be specified, but we want T to be deduced.
+  // Uses ekatBFB as default for Serialize
+  template <typename TeamMember, typename Lambda, typename ValueType, bool Serialize = ekatBFB>
+  static KOKKOS_INLINE_FUNCTION
+  void parallel_reduce (const TeamMember& team,
+                        const int& begin,
+                        const int& end,
+                        const Lambda& lambda,
+                        ValueType& result)
+  {
+    parallel_reduce<Serialize>(team, begin, end, lambda, result);
+  }
+
+  // Requires user to specify whether to serialize or not
+  template <bool Serialize, typename TeamMember, typename Lambda, typename ValueType>
+  static KOKKOS_INLINE_FUNCTION
+  void parallel_reduce (const TeamMember& team,
+                        const int& begin,
+                        const int& end,
+                        const Lambda& lambda,
+                        ValueType& result)
+  {
+    impl::parallel_reduce<Serialize, TeamMember, Lambda, ValueType>(team, begin, end, lambda, result);
+  }
+
+  // Uses ekatBFB as default for Serialize
+  template <typename TeamMember, typename InputProvider, typename ValueType, bool Serialize = ekatBFB>
+  static KOKKOS_INLINE_FUNCTION
+  void view_reduction (const TeamMember& team,
+                       const int& begin,
+                       const int& end,
+                       const InputProvider& input,
+                       ValueType& result)
+  {
+      view_reduction<Serialize>(team,begin,end,input,result);
+  }
+
+  // Requires user to specify whether to serialize or not
+  template <bool Serialize, typename TeamMember, typename InputProvider, typename ValueType>
+  static KOKKOS_INLINE_FUNCTION
+  void view_reduction (const TeamMember& team,
+                       const int& begin,
+                       const int& end,
+                       const InputProvider& input,
+                       ValueType& result)
+  {
+      impl::view_reduction<Serialize,TeamMember,InputProvider,ValueType>(team,begin,end,input,result);
+  }
+};
+#endif
+
 /*
  * TeamUtils contains utilities for getting concurrency info for thread teams.
  * You cannot use it directly (protected c-tor). You must use TeamUtils.
@@ -541,9 +627,89 @@ class TeamUtils<ValueType,Kokkos::Cuda> : public TeamUtilsCommonBase<ValueType,K
 };
 #endif
 
+#ifdef KOKKOS_ENABLE_SYCL
+template <typename ValueType>
+class TeamUtils<ValueType,Kokkos::Experimental::SYCL> : public TeamUtilsCommonBase<ValueType,Kokkos::Experimental::SYCL>
+{
+  using Device = Kokkos::Device<Kokkos::Experimental::SYCL, typename Kokkos::Experimental::SYCL::memory_space>;
+  using flag_type = int; // this appears to be the smallest type that correctly handles atomic operations
+  using view_1d = typename KokkosTypes<Device>::view_1d<flag_type>;
+  using RandomGenerator = Kokkos::Random_XorShift64_Pool<Kokkos::Experimental::SYCL>;
+  using rnd_type = typename RandomGenerator::generator_type;
+
+  int             _num_ws_slots;    // how many workspace slots (potentially more than the num of concurrent teams due to overprovision factor)
+  bool            _need_ws_sharing; // true if there are more teams in the policy than ws slots
+  view_1d         _open_ws_slots;    // indexed by ws-idx, true if in current use, else false
+  RandomGenerator _rand_pool;
+
+ public:
+  template <typename TeamPolicy>
+  TeamUtils(const TeamPolicy& policy, const double& overprov_factor = 1.0) :
+    TeamUtilsCommonBase<ValueType,Kokkos::Experimental::SYCL>(policy),
+    _num_ws_slots(this->_league_size > this->_num_teams
+                  ? (overprov_factor * this->_num_teams > this->_league_size ? this->_league_size : overprov_factor * this->_num_teams)
+                  : this->_num_teams),
+    _need_ws_sharing(this->_league_size > _num_ws_slots),
+    _open_ws_slots("open_ws_slots", _need_ws_sharing ? _num_ws_slots : 0),
+    _rand_pool()
+  {
+    if (_need_ws_sharing) {
+      _rand_pool = RandomGenerator(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    }
+  }
+
+  // How many ws slots are there
+  int get_num_ws_slots() const { return _num_ws_slots; }
+
+  template <typename MemberType>
+  KOKKOS_INLINE_FUNCTION
+  int get_workspace_idx(const MemberType& team_member) const
+  {
+    if (!_need_ws_sharing) {
+      return team_member.league_rank();
+    }
+    else {
+      int ws_idx = 0;
+      Kokkos::single(Kokkos::PerTeam(team_member), [&] () {
+        ws_idx = team_member.league_rank() % _num_ws_slots;
+        if (!Kokkos::atomic_compare_exchange_strong(&_open_ws_slots(ws_idx), (flag_type) 0, (flag_type)1)) {
+          rnd_type rand_gen = _rand_pool.get_state(team_member.league_rank());
+          ws_idx = Kokkos::rand<rnd_type, int>::draw(rand_gen) % _num_ws_slots;
+          while (!Kokkos::atomic_compare_exchange_strong(&_open_ws_slots(ws_idx), (flag_type) 0, (flag_type)1)) {
+            ws_idx = Kokkos::rand<rnd_type, int>::draw(rand_gen) % _num_ws_slots;
+          }
+        }
+      });
+
+      // broadcast the idx to the team with a simple reduce
+      int ws_idx_max_reduce;
+      Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team_member, 1), [&] (int, int& ws_idx_max) {
+        ws_idx_max = ws_idx;
+      }, Kokkos::Max<int>(ws_idx_max_reduce));
+      team_member.team_barrier();
+      return ws_idx_max_reduce;
+    }
+  }
+
+
+  template <typename MemberType>
+  KOKKOS_INLINE_FUNCTION
+  void release_workspace_idx(const MemberType& team_member, int ws_idx) const
+  {
+    if (_need_ws_sharing) {
+      team_member.team_barrier();
+      Kokkos::single(Kokkos::PerTeam(team_member), [&] () {
+        flag_type volatile* const e = &_open_ws_slots(ws_idx);
+        *e = (flag_type)0;
+      });
+    }
+  }
+};
+#endif
+
 namespace impl {
 
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_SYCL)
 // Replacements for namespace std functions that don't run on the GPU.
 KOKKOS_INLINE_FUNCTION
 size_t strlen(const char* str)
@@ -558,7 +724,7 @@ KOKKOS_INLINE_FUNCTION
 void strcpy(char* dst, const char* src)
 {
   EKAT_KERNEL_ASSERT(dst != NULL && src != NULL);
-  while(*dst++ = *src++);
+  while(*dst++ == *src++);
 }
 KOKKOS_INLINE_FUNCTION
 int strcmp(const char* first, const char* second)

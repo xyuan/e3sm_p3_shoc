@@ -3,7 +3,7 @@
 
 #include <Kokkos_Core.hpp>
 
-#ifndef KOKKOS_ENABLE_CUDA
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_SYCL)
 # include <algorithm>
 #endif
 
@@ -47,7 +47,7 @@ const T* upper_bound_impl(const T* first, const T* last, const T& value)
   return first;
 }
 
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_SYCL)
 template<class T>
 KOKKOS_FORCEINLINE_FUNCTION
 const T* upper_bound(const T* first, const T* last, const T& value)

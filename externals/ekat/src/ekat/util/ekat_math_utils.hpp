@@ -6,7 +6,7 @@
 
 #include <Kokkos_Core.hpp>
 
-#ifndef KOKKOS_ENABLE_CUDA
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_SYCL)
 # include <cmath>
 # include <algorithm>
 #endif
@@ -15,7 +15,7 @@ namespace ekat {
 
 namespace impl {
 
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_SYCL)
 // Replacements for namespace std functions that don't run on the GPU.
 template <typename T>
 KOKKOS_FORCEINLINE_FUNCTION
@@ -54,8 +54,10 @@ using std::max_element;
 template<typename RealT>
 KOKKOS_INLINE_FUNCTION
 bool is_nan (const RealT& a) {
-#ifdef __CUDA_ARCH__
+#if defined(__CUDA_ARCH__)
   return isnan(a);
+#elif defined(__SYCL_ARCH__)
+  return sycl:isnan(a);
 #else
   return std::isnan(a);
 #endif

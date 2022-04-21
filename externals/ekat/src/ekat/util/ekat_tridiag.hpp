@@ -140,6 +140,30 @@ int get_team_nthr (const Kokkos::Impl::CudaTeamMember& team) {
 }
 #endif
 
+#ifdef KOKKOS_ENABLE_SYCL
+KOKKOS_INLINE_FUNCTION
+int get_thread_id_within_team (const Kokkos::Impl::SYCLTeamMember& team) {
+#ifdef __SYCL_ARCH__
+  // Can't use team.team_rank() here because vector direction also uses physical
+  // threads but TeamMember types don't expose that information.
+  return item.get_local_id(0)*item.get_loal_id(1)+item.get_local_id(0);
+#else
+  assert(0);
+  return -1;
+#endif
+}
+
+KOKKOS_INLINE_FUNCTION
+int get_team_nthr (const Kokkos::Impl::CudaTeamMember& team) {
+#ifdef __SYCL_ARCH__
+  return item.get_local_id(0)*item.get_local_id(1);
+#else
+  assert(0);
+  return -1;
+#endif
+}
+#endif
+
 // The caller must provide the team_barrier after this function returns before A
 // is accessed.
 template <typename TeamMember, typename TridiagDiag>

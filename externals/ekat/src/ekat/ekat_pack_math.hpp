@@ -5,7 +5,7 @@
 
 namespace ekat {
 
-#ifdef __CUDA_ARCH__
+#if defined(__CUDA_ARCH__)
 #define ekat_pack_gen_unary_stdfn(fn)               \
   template <typename ScalarT, int N>                \
   KOKKOS_INLINE_FUNCTION                            \
@@ -17,7 +17,19 @@ namespace ekat {
     }                                               \
     return s;                                       \
   }
-#else
+#elif defined(__SYCL_ARCH__)
+#define ekat_pack_gen_unary_stdfn(fn)               \
+  template <typename ScalarT, int N>                \
+  KOKKOS_INLINE_FUNCTION                            \
+  Pack<ScalarT,N> fn (const Pack<ScalarT,N>& p) {   \
+    Pack<ScalarT,N> s;                              \
+    vector_simd                                     \
+    for (int i = 0; i < N; ++i) {                   \
+      s[i] = ::fn(p[i]);                            \
+    }                                               \
+    return s;                                       \
+  }
+#else	
 #define ekat_pack_gen_unary_stdfn(fn)               \
   template <typename ScalarT, int N>                \
   KOKKOS_INLINE_FUNCTION                            \

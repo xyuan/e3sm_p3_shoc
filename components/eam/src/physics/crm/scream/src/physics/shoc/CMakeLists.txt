@@ -13,7 +13,7 @@ set(SHOC_HEADERS
 )
 
 # Add ETI source files if not on CUDA
-if (NOT CUDA_BUILD OR Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE)
+if ((NOT CUDA_BUILD OR Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE) OR (NOT SYCL_BUILD OR Kokkos_ENABLE_SYCL_RELOCATABLE_DEVICE_CODE))
   list(APPEND SHOC_SRCS
     shoc_adv_sgs_tke.cpp
     shoc_assumed_pdf.cpp

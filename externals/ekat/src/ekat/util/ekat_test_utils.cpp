@@ -17,7 +17,7 @@ int get_test_device (const int mpi_rank)
   // Set to -1 by default, which leaves kokkos in full control
   int dev_id = -1;
 
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_SYCL)
   auto count_str = getenv("CTEST_RESOURCE_GROUP_COUNT");
   if (count_str!=nullptr) {
     // If CTest is setting the CTEST_RESOURCE_GROUP_COUNT variable,
