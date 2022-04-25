@@ -296,7 +296,7 @@ void test_view_reduction(const Scalar a=Scalar(0.0), const int begin=0, const in
   team_size /= (ekat::is_single_precision<Real>::value ? num_sm*64 : num_sm*32);
 #elif defined(KOKKOS_ENABLE_SYCL)
   ExeSpace temp_space;
-  auto num_sm = temp_space.impl_internal_space_instance()->m_multiProcCount;
+  auto num_sm = temp_space.impl_internal_space_instance()->m_maxWorkgroupSize;
   team_size /= (ekat::is_single_precision<Real>::value ? num_sm*64 : num_sm*32);
 #endif
 

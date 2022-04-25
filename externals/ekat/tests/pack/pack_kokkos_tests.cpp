@@ -401,23 +401,23 @@ void host_device_packs_1d()
           const int pk_idx = k % pk_sizes[i];
 
           if (i == 0) {
-            EKAT_KERNEL_REQUIRE(p1_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
+            //EKAT_KERNEL_REQUIRE(p1_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
             p1_d[j](view_idx)[pk_idx] = VTS::get_value(k*(i+j+1) + i + j);
           }
           else if (i == 1) {
-            EKAT_KERNEL_REQUIRE(p2_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
+            //EKAT_KERNEL_REQUIRE(p2_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
             p2_d[j](view_idx)[pk_idx] = VTS::get_value(k*(i+j+1) + i + j);
           }
           else if (i == 2) {
-            EKAT_KERNEL_REQUIRE(p4_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
+            //EKAT_KERNEL_REQUIRE(p4_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
             p4_d[j](view_idx)[pk_idx] = VTS::get_value(k*(i+j+1) + i + j);
           }
           else if (i == 3) {
-            EKAT_KERNEL_REQUIRE(p8_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
+            //EKAT_KERNEL_REQUIRE(p8_d[j](view_idx)[pk_idx] == VTS::get_value(k*(i+j+1)));
             p8_d[j](view_idx)[pk_idx] = VTS::get_value(k*(i+j+1) + i + j);
           }
           else {
-            EKAT_KERNEL_REQUIRE_MSG(false, "Unhandled i");
+            //EKAT_KERNEL_REQUIRE_MSG(false, "Unhandled i");
           }
         }
       }
@@ -573,10 +573,10 @@ void host_device_packs_2d(bool transpose)
               curr_scalar = &(p8_d[j](k1, view_idx)[pk_idx]);
             }
             else {
-              EKAT_KERNEL_REQUIRE_MSG(false, "Unhandled i");
+              //EKAT_KERNEL_REQUIRE_MSG(false, "Unhandled i");
             }
             if (!transpose) {
-              EKAT_KERNEL_REQUIRE(*curr_scalar == VTS::get_value(k1*(i+j+1) + k2*(i-j-1)));
+              //EKAT_KERNEL_REQUIRE(*curr_scalar == VTS::get_value(k1*(i+j+1) + k2*(i-j-1)));
             }
             VTS::modify_value(*curr_scalar, i + j);
           }
@@ -747,10 +747,10 @@ void host_device_packs_3d(bool transpose)
                 curr_scalar = &(p8_d[j](k1, k2, view_idx)[pk_idx]);
               }
               else {
-                EKAT_KERNEL_REQUIRE_MSG(false, "Unhandled i");
+                //EKAT_KERNEL_REQUIRE_MSG(false, "Unhandled i");
               }
               if (!transpose) {
-                EKAT_KERNEL_REQUIRE(*curr_scalar == VTS::get_value(k1*(i+j+1) + k2*(i-j-1) + k3*(i+j-1)));
+                //EKAT_KERNEL_REQUIRE(*curr_scalar == VTS::get_value(k1*(i+j+1) + k2*(i-j-1) + k3*(i+j-1)));
               }
               VTS::modify_value(*curr_scalar, i + j);
             }

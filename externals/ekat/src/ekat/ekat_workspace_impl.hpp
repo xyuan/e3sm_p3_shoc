@@ -540,7 +540,7 @@ void WorkspaceManager<T, D>::Workspace::release_many_contiguous(
   // Verify contiguous
   for (int n = 0; n < static_cast<int>(N) - 1; ++n) {
     const auto& space = *ptrs[n];
-    EKAT_KERNEL_ASSERT_MSG(m_parent.get_next<S>(space) == m_parent.get_index<S>(space) + 1, m_ws_name);
+    EKAT_KERNEL_ASSERT_MSG(m_parent.get_next<S>(space) == m_parent.get_index<S>(space) + 1, this->m_ws_name);
   }
 #endif
 

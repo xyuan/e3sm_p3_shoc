@@ -146,6 +146,7 @@ int get_thread_id_within_team (const Kokkos::Impl::SYCLTeamMember& team) {
 #ifdef __SYCL_ARCH__
   // Can't use team.team_rank() here because vector direction also uses physical
   // threads but TeamMember types don't expose that information.
+  auto item = team.item();
   return item.get_local_id(0)*item.get_loal_id(1)+item.get_local_id(0);
 #else
   assert(0);
@@ -154,8 +155,9 @@ int get_thread_id_within_team (const Kokkos::Impl::SYCLTeamMember& team) {
 }
 
 KOKKOS_INLINE_FUNCTION
-int get_team_nthr (const Kokkos::Impl::CudaTeamMember& team) {
+int get_team_nthr (const Kokkos::Impl::SYCLTeamMember& team) {
 #ifdef __SYCL_ARCH__
+  auto item = team.item();
   return item.get_local_id(0)*item.get_local_id(1);
 #else
   assert(0);

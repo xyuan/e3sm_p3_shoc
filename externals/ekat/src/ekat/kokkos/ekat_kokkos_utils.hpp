@@ -83,9 +83,9 @@ void parallel_reduce (const TeamMember& team,
 #if defined(KOKKOS_ENABLE_CUDA)
     // Broadcast result to all threads by doing sum of one thread's
     // non-0 value and the rest of the 0s.
-    Kokkos::Impl::CudaTeamMember::vector_reduce(Kokkos::Sum<ValueType>(local_tmp));
+    team.vector_reduce(Kokkos::Sum<ValueType>(local_tmp));
 #elif defined(KOKKOS_ENABLE_SYCL)
-    Kokkos::Impl::SYCLTeamMember::vector_reduce(Kokkos::Sum<ValueType>(local_tmp));
+    team.vector_reduce(Kokkos::Sum<ValueType>(local_tmp));
 #endif
 
    result = local_tmp;

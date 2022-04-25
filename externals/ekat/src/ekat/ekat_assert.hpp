@@ -5,7 +5,9 @@
 #include <exception>
 #include <assert.h>
 #include <stdexcept>  // For std::logic_error
-
+#if defined(KOKKOS_ENABLE_SYCL)
+ #include <sycl/sycl.hpp>
+#endif
 /*
  * Asserts and error checking macros/functions.
  *
@@ -15,6 +17,12 @@
  *
  * For _msg checks, the msg argument can contain '<<' if not a kernel check.
  */
+#if defined(KOKKOS_ENABLE_SYCL)
+  #define PRINT(condition, msg)                                         
+#else
+  #define PRINT(condition, msg)                                         \
+    printf("KERNEL CHECK FAILED:\n   %s\n   %s\n",#condition,msg);
+#endif
 
 // Internal do not call directly
 #define IMPL_THROW(condition, msg, exception_type)                      \
@@ -30,7 +38,7 @@
 #define IMPL_KERNEL_THROW(condition, msg)                             \
   do {                                                                \
     if ( ! (condition) ) {                                            \
-      printf("KERNEL CHECK FAILED:\n   %s\n   %s\n",#condition,msg);  \
+      PRINT(condition, msg)                                           \
       Kokkos::abort("");                                              \
     }                                                                 \
   } while (0)
