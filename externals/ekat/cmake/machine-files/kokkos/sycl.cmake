@@ -1,4 +1,5 @@
 # Settings used when SYCL is the Kokkos backend
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "-Wno-deprecated-declarations" CACHE STRING "C++ Flags" FORCE) 
 set(CMAKE_CXX_EXTENSIONS FALSE CACHE BOOL "OFF")
 set(CMAKE_VERBOSE_MAKEFILE TRUE CACHE BOOL "ON")

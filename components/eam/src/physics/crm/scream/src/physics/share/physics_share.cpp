@@ -146,7 +146,7 @@ Real cxx_log(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_log(input);
-#if defined(KOKKOS_ENABLE_SYCL)
+#elif defined(KOKKOS_ENABLE_SYCL)
   return SyclWrap<Real, DefaultDevice>::cxx_log(input);  
 #else
   return std::log(input);
@@ -168,7 +168,7 @@ Real cxx_exp(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_exp(input);
-#if defined(KOKKOS_ENABLE_SYCL)
+#elif defined(KOKKOS_ENABLE_SYCL)
   return SyclWrap<Real, DefaultDevice>::cxx_exp(input);  
 #else
   return std::exp(input);

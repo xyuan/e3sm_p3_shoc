@@ -137,11 +137,6 @@ else()
   set(SYCL_BUILD FALSE)
 endif ()
 
-# Add SYCL as a language for SYCL builds
-if (SYCL_BUILD)
-   enable_language(SYCL)
-endif()
-
 ### Scream default configuration options
 set(DEFAULT_MAX_RANKS 1)
 set(DEFAULT_MAX_THREADS 1)
@@ -302,6 +297,8 @@ SetCompilerFlags()
 if (SCREAM_DOUBLE_PRECISION)
   if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
     set(SCREAM_Fortran_FLAGS -real-size 64)
+  elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "IntelLLVM")
+    set(SCREAM_Fortran_FLAGS -r8)
   else()
     set(SCREAM_Fortran_FLAGS -fdefault-real-8 -fdefault-double-8)
   endif()
