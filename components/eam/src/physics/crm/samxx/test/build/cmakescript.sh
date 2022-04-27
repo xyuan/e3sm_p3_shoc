@@ -78,7 +78,7 @@ NX_RAD=`$NCHOME/bin/ncdump -h $2  | grep "crm_nx_rad =" | awk '{print $3}'`
 NY_RAD=`$NCHOME/bin/ncdump -h $2  | grep "crm_ny_rad =" | awk '{print $3}'`
 DX=1000
 DT=5
-NCRMS_FILE=`ncdump -h $2 | grep UNLIMITED | awk '{print $6}' | cut -d '(' -f 2`
+NCRMS_FILE=`$NCHOME/bin/ncdump -h $2 | grep UNLIMITED | awk '{print $6}' | cut -d '(' -f 2`
 if [[ $NY -eq 1 ]]; then
   echo "Error: 2D file specified as the 3D file\n\n"
   usage
@@ -147,6 +147,7 @@ cmake                                      \
   -DDEFS3D="$DEFS3D"                       \
   -DYAKL_HOME=${YAKL_HOME}                 \
   -DYAKL_CXX_FLAGS="${YAKL_CXX_FLAGS}"     \
+  -DYAKL_SYCL_FLAGS="${YAKL_SYCL_FLAGS}"   \
   -DYAKL_CUDA_FLAGS="${YAKL_CUDA_FLAGS}"   \
   -DYAKL_C_FLAGS="${YAKL_C_FLAGS}"         \
   -DYAKL_F90_FLAGS="${YAKL_F90_FLAGS}"     \
@@ -154,6 +155,7 @@ cmake                                      \
   -DARCH="${ARCH}"                  \
   -DMACH="${MACH}"                  \
   -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON  \
+  -DKokkos_CXX_STANDARD=17           \
   ..
 
 
