@@ -10,7 +10,7 @@ set(PHYSICS_SHARE_SRCS
 )
 
 # Add ETI source files if not on GPU
-if ((NOT CUDA_BUILD) && (NOT HIP_BUILD))
+if ((NOT CUDA_BUILD) AND (NOT HIP_BUILD))
   list(APPEND PHYSICS_SHARE_SRCS
   physics_saturation.cpp)
 endif()

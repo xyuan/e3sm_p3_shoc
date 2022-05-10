@@ -126,7 +126,7 @@ Real cxx_cbrt(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_cbrt(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_cbrt(input);
 #else
   return std::cbrt(input);
@@ -137,7 +137,7 @@ Real cxx_sqrt(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_sqrt(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_sqrt(input);
 #else
   return std::sqrt(input);
@@ -148,7 +148,7 @@ Real cxx_log(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_log(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_log(input);
 #else
   return std::log(input);
@@ -159,7 +159,7 @@ Real cxx_log10(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_log10(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_log10(input);
 #else
   return std::log10(input);
@@ -170,7 +170,7 @@ Real cxx_exp(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_exp(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_exp(input);
 #else
   return std::exp(input);
@@ -181,7 +181,7 @@ Real cxx_expm1(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_expm1(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_expm1(input);
 #else
   return std::expm1(input);
@@ -192,7 +192,7 @@ Real cxx_tanh(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_tanh(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_tanh(input);
 #else
   return std::tanh(input);
@@ -203,7 +203,7 @@ Real cxx_erf(Real input)
 {
 #if defined(KOKKOS_ENABLE_CUDA)
   return CudaWrap<Real, DefaultDevice>::cxx_erf(input);
-#if defined(KOKKOS_ENABLE_HIP)
+#elif defined(KOKKOS_ENABLE_HIP)
   return HipWrap<Real, DefaultDevice>::cxx_erf(input);
 #else
   return std::erf(input);
