@@ -209,7 +209,7 @@ class WorkspaceManager
     KOKKOS_INLINE_FUNCTION
     ~Workspace();
 
-#ifndef KOKKOS_ENABLE_CUDA
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP)
    private:
 #endif
 
@@ -263,7 +263,7 @@ class WorkspaceManager
     const char* m_ws_name;
   }; // class Workspace
 
-#ifndef KOKKOS_ENABLE_CUDA
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP)
  private:
 #endif
 

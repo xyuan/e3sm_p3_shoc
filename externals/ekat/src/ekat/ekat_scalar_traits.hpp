@@ -13,6 +13,13 @@
 #include <math_constants.h>
 #endif
 
+#if defined(KOKKOS_ENABLE_HIP)
+#include <hip/device_functions.h>
+#define HIPRT_NAN_F        __int_as_float(0x7fffffff)
+/* double precision constants */
+#define HIPRT_NAN          __hiloint2double(0xfff80000, 0x00000000)
+#endif
+
 namespace ekat {
 
 /*
@@ -60,11 +67,21 @@ struct ScalarTraits {
   static const value_type quiet_NaN () {
     EKAT_KERNEL_ASSERT_MSG(std::is_floating_point<value_type>::value,
                        "Error! NaN is only available for floating point types.\n");
-#ifdef __CUDA_ARCH__
+#if defined(__CUDA_ARCH__)
     if (std::is_same<value_type,float>::value) {
       return CUDART_NAN_F;
     } else if (std::is_same<value_type,double>::value) {
       return CUDART_NAN;
+    } else {
+      EKAT_KERNEL_ERROR_MSG ("Error! No NaN provided for this floating point type.\n");
+      // Silence compiler warning
+      return 0;
+    }
+#elif defined(__HIP_ARCH__)
+    if (std::is_same<value_type,float>::value) {
+      return HIPRT_NAN_F;
+    } else if (std::is_same<value_type,double>::value) {
+      return HIPRT_NAN;
     } else {
       EKAT_KERNEL_ERROR_MSG ("Error! No NaN provided for this floating point type.\n");
       // Silence compiler warning

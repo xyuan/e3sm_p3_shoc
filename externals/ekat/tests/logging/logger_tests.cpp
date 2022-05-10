@@ -15,10 +15,10 @@ TEST_CASE("log tests", "[logging]") {
     SECTION("default logger") {
       // this section is just for examples, and to make sure nothing went wrong
       Log::debug("here is a debug message");
-      Log::info("You won't see the debug message because the default log level is '{0}', and {0} > debug = {1}", Log::level::to_string_view(Log::get_level()), (Log::get_level() > Log::level::debug) );
-      Log::set_level(Log::level::debug);
+      Log::info("You won't see the debug message because the default log level is '{0}', and {0} > debug = {1}" );
+      Log::default_logger()->set_level(Log::level::debug);
       Log::debug("now you can see debug messages because we reset the log level to debug.");
-      Log::set_level(Log::level::trace);
+      Log::default_logger()->set_level(Log::level::trace);
       Log::trace("trace messages have the lowest priority.");
       Log::info("this is an info message with a number ({}).", 42);
       Log::warn("the default logger has no knowledge of MPI");

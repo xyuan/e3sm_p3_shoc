@@ -7,8 +7,8 @@ set(P3_SRCS
   micro_p3.F90
 )
 
-# Add ETI source files if not on CUDA
-if (NOT CUDA_BUILD OR Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE)
+# Add ETI source files if not on GPU
+if ((NOT CUDA_BUILD OR Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE) AND (NOT HIP_BUILD OR Kokkos_ENABLE_HIP_RELOCATABLE_DEVICE_CODE))
   list(APPEND P3_SRCS
     p3_upwind.cpp
     p3_cloud_sed.cpp

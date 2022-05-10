@@ -285,7 +285,7 @@ static void unittest_workspace()
         team.team_barrier();
       }
 
-  #ifndef KOKKOS_ENABLE_CUDA
+  #if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP)
   #ifdef WS_EXPENSIVE_TEST
       if (true)
   #else
@@ -434,7 +434,7 @@ TEST_CASE("workspace_manager", "[utils]") {
   unit_test::UnitWrap::UnitTest<ekat::DefaultDevice>::unittest_workspace();
 }
 
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
 // Force host testing on CUDA
 TEST_CASE("workspace_manager_host", "[utils]") {
   unit_test::UnitWrap::UnitTest<ekat::HostDevice>::unittest_workspace();

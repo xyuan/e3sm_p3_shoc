@@ -285,8 +285,10 @@ struct VectorT
 {
   using type = T;
 
+  KOKKOS_INLINE_FUNCTION
   static T get_value(int arg) { return static_cast<T>(arg); }
 
+  KOKKOS_INLINE_FUNCTION
   static void modify_value(T& value, int arg) { value += static_cast<T>(arg); }
 };
 
@@ -295,8 +297,10 @@ struct VectorT<bool>
 {
   using type = char;
 
+  KOKKOS_INLINE_FUNCTION
   static bool get_value(int arg) { return arg%2 == 0; }
 
+  KOKKOS_INLINE_FUNCTION
   static void modify_value(bool& value, int arg) {
     bool arg_value = get_value(arg);
     value = (value == arg_value);

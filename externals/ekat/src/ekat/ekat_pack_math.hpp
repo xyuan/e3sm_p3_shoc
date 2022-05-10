@@ -5,7 +5,7 @@
 
 namespace ekat {
 
-#ifdef __CUDA_ARCH__
+#if defined(__CUDA_ARCH__) || defined(__HIP_ARCH__)
 #define ekat_pack_gen_unary_stdfn(fn)               \
   template <typename ScalarT, int N>                \
   KOKKOS_INLINE_FUNCTION                            \

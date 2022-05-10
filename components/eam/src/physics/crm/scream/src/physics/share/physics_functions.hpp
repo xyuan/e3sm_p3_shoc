@@ -109,7 +109,7 @@ struct Functions
 
 // If a GPU build, make all code available to the translation unit; otherwise,
 // ETI is used.
-#ifdef KOKKOS_ENABLE_CUDA
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
 # include "physics_saturation_impl.hpp"
 #endif
 
