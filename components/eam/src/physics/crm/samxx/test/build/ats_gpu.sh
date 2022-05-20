@@ -4,7 +4,7 @@
 module use /soft/restricted/CNDA/modulefiles
 module purge
 ##module load oneapi
-module load oneapi/eng-compiler/2022.01.30.006
+module load oneapi/eng-compiler/2022.01.30.007
 ###module load oneapi/2021.08.15.005
 ###module load oneapi/2021.04.30.004
 ####module load mpi/aurora_mpich/gnu-sockets/39.1
@@ -54,5 +54,7 @@ export CXXFLAGS="-O3 "
 export ARCH="SYCL"
 export MACH="jlse"
 export YAKL_SYCL_FLAGS="-fsycl '-Wno-deprecated-declarations' "
-export YAKL_HOME="/gpfs/jlse-fs0/projects/climate/xyuan/yakl/"
+#export YAKL_HOME="/gpfs/jlse-fs0/projects/climate/xyuan/yakl"
+export YAKL_HOME="`pwd`/../../../../../../../../externals/YAKL"
+#export YAKL_CUB_HOME="`pwd`/../../../../../../../../externals/cub"
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/wuda/soft/hdf5/1.8.16-parallel/intel18/lib:/home/wuda/soft/szip/2.1.1/intel18/lib:/soft/restricted/CNDA/mpich/drop41.1/mpich-ofi-sockets-icc-default-ats-drop41/lib
