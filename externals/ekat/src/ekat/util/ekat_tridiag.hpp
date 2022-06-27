@@ -143,24 +143,14 @@ int get_team_nthr (const Kokkos::Impl::CudaTeamMember& team) {
 #if defined(KOKKOS_ENABLE_HIP)
 KOKKOS_INLINE_FUNCTION
 int get_thread_id_within_team (const Kokkos::Impl::HIPTeamMember& team) {
-#if defined(__HIP_ARCH__)
   // Can't use team.team_rank() here because vector direction also uses physical
   // threads but TeamMember types don't expose that information.
   return blockDim.x * threadIdx.y + threadIdx.x;
-#else
-  assert(0);
-  return -1;
-#endif
 }
 
 KOKKOS_INLINE_FUNCTION
 int get_team_nthr (const Kokkos::Impl::HIPTeamMember& team) {
-#if defined(__HIP_ARCH__)
   return blockDim.x * blockDim.y;
-#else
-  assert(0);
-  return -1;
-#endif
 }
 #endif
 

@@ -54,7 +54,7 @@ using std::max_element;
 template<typename RealT>
 KOKKOS_INLINE_FUNCTION
 bool is_nan (const RealT& a) {
-#if defined(__CUDA_ARCH__) || defined(__HIP_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
   return isnan(a);
 #else
   return std::isnan(a);
