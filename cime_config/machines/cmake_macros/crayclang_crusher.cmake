@@ -1,0 +1,25 @@
+
+if (NOT DEBUG)
+  string(APPEND CFLAGS " -O2 -hnoacc -hzero -hfp0 -hipa0")
+  string(APPEND FFLAGS " -O2 -hnoacc -hzero -hfp0 -hipa0")
+endif()
+if (DEBUG)
+  string(APPEND CFLAGS " -O0 -g -hnoacc -hzero -hfp0 -hipa0")
+  string(APPEND FFLAGS " -O0 -g -hnoacc -hzero -hfp0 -hipa0")
+endif()
+
+if (compile_threaded)
+  string(APPEND CFLAGS " -fopenmp")
+  string(APPEND FFLAGS " -fopenmp")
+  string(APPEND CXXFLAGS " -fopenmp")
+  string(APPEND LDFLAGS " -fopenmp")
+endif()
+
+string(APPEND CPPDEFS " -DFORTRANUNDERSCORE -DNO_R16 -DCPRCRAY")
+string(APPEND SLIBS " -L$ENV{PNETCDF_PATH}/lib -lpnetcdf")
+set(NETCDF_PATH "$ENV{NETCDF_DIR}")
+set(PNETCDF_PATH "$ENV{PNETCDF_DIR}")
+set(PIO_FILESYSTEM_HINTS "gpfs")
+string(APPEND CXX_LIBS " -lstdc++")
+set(SUPPORTS_CXX "TRUE")
+
