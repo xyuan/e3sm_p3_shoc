@@ -67,7 +67,7 @@ struct ScalarTraits {
   static const value_type quiet_NaN () {
     EKAT_KERNEL_ASSERT_MSG(std::is_floating_point<value_type>::value,
                        "Error! NaN is only available for floating point types.\n");
-#if defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA)
     if (std::is_same<value_type,float>::value) {
       return CUDART_NAN_F;
     } else if (std::is_same<value_type,double>::value) {
@@ -77,7 +77,7 @@ struct ScalarTraits {
       // Silence compiler warning
       return 0;
     }
-#elif defined(__HIP_ARCH__)
+#elif defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<value_type,float>::value) {
       return HIPRT_NAN_F;
     } else if (std::is_same<value_type,double>::value) {
