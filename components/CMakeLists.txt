@@ -62,6 +62,12 @@ function(set_compilers_e3sm)
   else()
     set(USE_CUDA FALSE PARENT_SCOPE)
   endif()
+
+  if (USE_HIP)
+    set(USE_HIP TRUE PARENT_SCOPE)
+  else()
+    set(USE_HIP FALSE PARENT_SCOPE)
+  endif()
 endfunction()
 set_compilers_e3sm()
 
@@ -101,6 +107,8 @@ set(CMAKE_VERBOSE_MAKEFILE TRUE)
 
 if(USE_CUDA)
   enable_language(CUDA)
+elseif(USE_HIP)
+  enable_language(HIP)
 endif()
 
 # Scream manages its own flags
