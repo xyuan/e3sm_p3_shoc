@@ -49,38 +49,46 @@ void pressure() {
 
   #ifndef USE_ORIG_FFT
 
-    yakl::RealFFT1D<nx> fftx;
-    yakl::RealFFT1D<fftySize> ffty;
-    fftx.init(fftx.trig);
-    ffty.init(ffty.trig);
+    yakl::RealFFT1D<real> ffty;
+    yakl::RealFFT1D<real> fftx;
+    fftx.init(f , 2 , nx );
+    ffty.init(f , 1 , fftySize );
+
+    //yakl::RealFFT1D<nx, real> fftx;
+    //yakl::RealFFT1D<fftySize, real> ffty;
+    //fftx.init();
+    //ffty.init();
 
     // for (int k=0; k<nzslab; k++) {
     //  for (int j=0; j<ny; j++) {
     //      for (int icrm=0; icrm<ncrms; icrm++) {
-    parallel_for( SimpleBounds<3>(nzslab,ny,ncrms) , YAKL_LAMBDA (int k, int j, int icrm) {
-      SArray<real,1,nx+2> ftmp;
+    //parallel_for( SimpleBounds<3>(nzslab,ny,ncrms) , YAKL_LAMBDA (int k, int j, int icrm) {
+    //  SArray<real,1,nx+2> ftmp;
 
-      for (int i=0; i<nx ; i++) { ftmp(i) = f(k,j,i,icrm); }
+    //  for (int i=0; i<nx ; i++) { ftmp(i) = f(k,j,i,icrm); }
 
-      fftx.forward(ftmp, fftx.trig, yakl::FFT_SCALE_ECMWF);
+    //  fftx.forward(ftmp, fftx.trig, yakl::FFT_SCALE_ECMWF);
 
-      for (int i=0; i<nx2; i++) { f(k,j,i,icrm) = ftmp(i); }
-    });
+    //  for (int i=0; i<nx2; i++) { f(k,j,i,icrm) = ftmp(i); }
+    //});
 
+    fftx.forward_real( f );  // Batched over y and z dimensions
+    
     if (RUN3D) {
       // for (int k=0; k<nzslab; k++) {
       //  for (int i=0; j<nx+1; i++) {
       //    for(int l=0; l<ny2; l++) {
       //      for (int icrm=0; icrm<ncrms; icrm++) {
-      parallel_for( SimpleBounds<3>(nzslab,nx+1,ncrms) , YAKL_LAMBDA (int k, int i, int icrm) {
-        SArray<real,1,ny+2> ftmp;
+      //parallel_for( SimpleBounds<3>(nzslab,nx+1,ncrms) , YAKL_LAMBDA (int k, int i, int icrm) {
+      //  SArray<real,1,ny+2> ftmp;
 
-        for (int j=0; j<ny ; j++) { ftmp(j) = f(k,j,i,icrm); }
+      //  for (int j=0; j<ny ; j++) { ftmp(j) = f(k,j,i,icrm); }
 
-        ffty.forward(ftmp, ffty.trig, yakl::FFT_SCALE_ECMWF);
+      //  ffty.forward(ftmp, ffty.trig, yakl::FFT_SCALE_ECMWF);
 
-        for (int j=0; j<ny2; j++) { f(k,j,i,icrm) = ftmp(j); }
-      });
+      //  for (int j=0; j<ny2; j++) { f(k,j,i,icrm) = ftmp(j); }
+      //});
+      ffty.forward_real( f );  // Batched over x and z dimensions
     }
 
   #else
@@ -209,30 +217,31 @@ void pressure() {
       // for (int k=0; k<nzslab; k++) {
       //   for (int i=0; i<nx+1; i++) {
       //     for (int icrm=0; icrm<ncrms; icrm++) {
-      parallel_for( SimpleBounds<3>(nzslab,nx+1,ncrms) , YAKL_LAMBDA (int k, int i, int icrm) {
-        SArray<real,1,ny+2> ftmp;
+      //parallel_for( SimpleBounds<3>(nzslab,nx+1,ncrms) , YAKL_LAMBDA (int k, int i, int icrm) {
+      //  SArray<real,1,ny+2> ftmp;
         
-        for(int j=0; j<ny+2; j++) { ftmp(j) = f(k,j,i,icrm); }
+      //  for(int j=0; j<ny+2; j++) { ftmp(j) = f(k,j,i,icrm); }
 
-        ffty.inverse(ftmp, ffty.trig, yakl::FFT_SCALE_ECMWF);
+      //  ffty.inverse(ftmp, ffty.trig, yakl::FFT_SCALE_ECMWF);
 
-        for(int j=0; j<ny  ; j++) { f(k,j,i,icrm) = ftmp(j); } 
-      });
+      //  for(int j=0; j<ny  ; j++) { f(k,j,i,icrm) = ftmp(j); } 
+      //});
+      ffty.inverse_real( f );  // Batched over x and z dimensions      
     }
 
     // for (int k=0; k<nzslab; k++) {
     //   for (int j=0; i<ny; i++) {
     //     for (int icrm=0; icrm<ncrms; icrm++) {
-    parallel_for( SimpleBounds<3>(nzslab,ny,ncrms) , YAKL_LAMBDA (int k, int j, int icrm) {
-      SArray<real,1,nx+2> ftmp;
+    //parallel_for( SimpleBounds<3>(nzslab,ny,ncrms) , YAKL_LAMBDA (int k, int j, int icrm) {
+    //  SArray<real,1,nx+2> ftmp;
 
-      for(int i=0; i<nx+2; i++) { ftmp(i) = f(k,j,i,icrm); }
+    //  for(int i=0; i<nx+2; i++) { ftmp(i) = f(k,j,i,icrm); }
 
-      fftx.inverse(ftmp, fftx.trig, yakl::FFT_SCALE_ECMWF);
+    //  fftx.inverse(ftmp, fftx.trig, yakl::FFT_SCALE_ECMWF);
 
-      for(int i=0; i<nx  ; i++) { f(k,j,i,icrm) = ftmp(i); }
-    });
-
+    //  for(int i=0; i<nx  ; i++) { f(k,j,i,icrm) = ftmp(i); }
+    //});
+    fftx.inverse_real( f );  // Batched over y and z dimensions
   #else
 
     f.deep_copy_to(fHost);

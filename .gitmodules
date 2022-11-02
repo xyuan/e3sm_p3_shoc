@@ -4,7 +4,7 @@
 [submodule "alm-mpp"]
 	path = components/elm/src/external_models/mpp
 	url = git@github.com:MPP-LSM/MPP.git
-	branch = alm/develop
+	branch = main
 [submodule "sbetr"]
 	path = components/elm/src/external_models/sbetr
 	url = git@github.com:BeTR-biogeochemistry-modeling/sbetr.git
